@@ -314,10 +314,10 @@ EXIT CODES
     `process` when the VSS Agent isn't reachable, by `audio
     transcribe` for unknown quality preset)
 
-  No formal ExitCode enum yet (Spectator is younger than slackwright).
-  When the surface stabilizes, promote these to a documented enum in
-  the same shape — agents will key off it. (Future work; flagged in
-  dev.memory.md.)
+  No formal ExitCode enum yet. When the surface stabilizes, promote
+  these to a documented enum (with stable numeric values, lowercase
+  snake_case `error` codes, and a remediation table) — agents will
+  key off it. (Future work; flagged in dev.memory.md.)
 
 
 --------------------------------------------------------------------------------
