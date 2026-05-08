@@ -55,8 +55,8 @@ SOLUTION
     2. **Wrapper-only invocation.** `./spectator <verb>` from a fresh
        clone bootstraps everything. No `pip install`, no `make`, no
        `tox` — the wrapper handles it. This is on purpose: the
-       project lives under cloud-synced filesystems (iCloud Drive /
-       OneDrive) where setuptools' editable .pth shim is sometimes
+       project lives under cloud-synced filesystems where setuptools'
+       editable .pth shim is sometimes
        hidden, and we want zero exposure to that.
 
 
@@ -327,7 +327,7 @@ EXIT CODES
 Quality presets (audio.py):
   * studio   — large-v3-turbo, beam=1, greedy. Clean studio mic.
   * meeting  — large-v3-turbo, beam=5, temperature fallback.
-               DEFAULT. Teams / Zoom / Webex recordings.
+               DEFAULT. Typical video-conferencing recordings.
   * phone    — large-v3, beam=5, no_speech_threshold=0.6.
                Voice-coded / low-bitrate.
   * extreme  — large-v3, beam=10, patience=2.0,
@@ -534,14 +534,14 @@ the user's manual integration runs.
 12. KNOWN GOTCHAS / EDGE CASES
 --------------------------------------------------------------------------------
 
-* iCloud Drive / OneDrive sometimes mark setuptools' editable .pth
+* Cloud-synced filesystems sometimes mark setuptools' editable .pth
   shim as hidden, which Python 3.12.13+ refuses to load. Spectator
   sidesteps the entire class of issues by being not-pip-installable
   ([tool.uv] package = false) and invoking via `python -m src` with
   PYTHONPATH=$HERE. If a user reports import weirdness, suspect this.
 
 * The wrapper's `[ "pyproject.toml" -nt "$INSTALL_STAMP" ]` mtime
-  check: iCloud sometimes rewrites mtimes when syncing. False positive
+  check: some cloud-storage daemons rewrite mtimes when syncing. False positive
   re-syncs are harmless (just slower); false negatives would miss a
   real dependency change. Pin to `--force` if you suspect.
 

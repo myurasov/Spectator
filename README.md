@@ -180,7 +180,7 @@ Quality presets:
 | Preset | Use case |
 |---|---|
 | `studio` | Clean studio mic, podcast feed |
-| `meeting` (default) | Teams / Zoom / Webex / Google Meet recordings |
+| `meeting` (default) | typical video-conferencing recordings (clear voice, mixed quality) |
 | `phone` | Voice-coded / low-bitrate phone calls |
 | `extreme` | Distant mic, lots of noise, heavy crosstalk |
 
@@ -237,7 +237,7 @@ Stops the docker stack and frees the GPU. The image cache stays, so the next `up
 - Hardware profiles (H100 / L40S / RTX PRO 6000 / Jetson THOR)
 - Audio language handling (bilingual, translate-to-English)
 - Self-hosted LLM endpoints (override the default `build.nvidia.com`)
-- Notes & caveats (iCloud / OneDrive interactions, port conflicts, bring-up timing)
+- Notes & caveats (cloud-synced filesystem interactions, port conflicts, bring-up timing)
 - Iterative development (the `rsync`-only flow for code edits)
 - Project layout
 

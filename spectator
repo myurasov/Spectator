@@ -104,7 +104,7 @@ run_cli() {
   bootstrap
   # PYTHONPATH=$HERE makes `src` importable as a package, so `python -m
   # src` resolves to src/__main__.py. We avoid editable installs (which
-  # need a setuptools .pth shim that iCloud / OneDrive sometimes mark
+  # need a setuptools .pth shim that some cloud-synced filesystems mark
   # hidden, breaking Python 3.12.13+'s import machinery).
   PYTHONPATH="$HERE" exec "$VENV_DIR/bin/python" -m src "$@"
 }

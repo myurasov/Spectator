@@ -59,8 +59,8 @@ Issues = "https://github.com/myurasov/Spectator/issues"
 
 # Don't install this project itself — invoke as `./spectator` (which runs
 # `python -m src` under PYTHONPATH=<project-root>) or `uv run python -m src`.
-# This avoids setuptools' `__editable__*.pth` shim, which iCloud Drive and
-# OneDrive sometimes mark UF_HIDDEN, blocking Python 3.12.13+ from loading it.
+# This avoids setuptools' `__editable__*.pth` shim, which some cloud-synced
+# filesystems mark UF_HIDDEN, blocking Python 3.12.13+ from loading it.
 [tool.uv]
 package = false
 

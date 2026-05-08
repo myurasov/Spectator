@@ -89,7 +89,7 @@ Reserved dev-workflow names: `install / test / lint / fmt / shell /
 clean / help`. Anything else is forwarded to the Spectator Python CLI
 as-is. The wrapper sets `PYTHONPATH=$HERE` (the project root) and
 invokes `python -m src`, sidestepping editable installs entirely —
-cloud-synced filesystems (iCloud / OneDrive) sometimes mark
+cloud-synced filesystems sometimes mark
 setuptools' `.pth` shim as hidden, and we want zero exposure to that.
 
 For documentation aimed at humans (not agents):

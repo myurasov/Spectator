@@ -103,7 +103,7 @@ Anything else is forwarded to the Spectator Python CLI.
 
 ### Why a wrapper at all?
 
-The wrapper exists so the source tree is self-bootstrapping (a fresh clone runs without any prior Python setup beyond [`uv`](https://docs.astral.sh/uv/)) and it keeps the dev workflow (`test`, `lint`, `fmt`) discoverable next to the user-facing commands. It also sets `PYTHONPATH=$HERE` (the project root) before invoking `python -m src`, which sidesteps editable installs entirely — cloud-synced filesystems (iCloud Drive / OneDrive) sometimes mark setuptools' `.pth` shim as hidden, breaking Python 3.12.13+'s import machinery. By design, this project is **not pip-installable** (`pyproject.toml` declares `[tool.uv] package = false`); use `./spectator …` or `uv run python -m src …` to invoke it.
+The wrapper exists so the source tree is self-bootstrapping (a fresh clone runs without any prior Python setup beyond [`uv`](https://docs.astral.sh/uv/)) and it keeps the dev workflow (`test`, `lint`, `fmt`) discoverable next to the user-facing commands. It also sets `PYTHONPATH=$HERE` (the project root) before invoking `python -m src`, which sidesteps editable installs entirely — cloud-synced filesystems sometimes mark setuptools' `.pth` shim as hidden, breaking Python 3.12.13+'s import machinery. By design, this project is **not pip-installable** (`pyproject.toml` declares `[tool.uv] package = false`); use `./spectator …` or `uv run python -m src …` to invoke it.
 
 ## SSH access (for `--target` flows)
 
@@ -220,7 +220,7 @@ Quality presets at a glance (run `./spectator audio presets` for the full table)
 | Preset | Model | Decode | Use case |
 |---|---|---|---|
 | `studio` | large-v3-turbo | greedy (beam=1) | clean studio mic, podcast feed |
-| `meeting` (default) | large-v3-turbo | beam=5 + temp fallback | Teams / Zoom recordings |
+| `meeting` (default) | large-v3-turbo | beam=5 + temp fallback | typical video-conferencing recordings |
 | `phone` | large-v3 | beam=5, VAD-aware | voice-coded ≤ 32 kbps audio |
 | `extreme` | large-v3 | beam=10 + patience=2 | distant mic, heavy noise/crosstalk |
 
@@ -304,7 +304,7 @@ Pick by passing `--hardware <profile>` (and adjust `--llm` accordingly — serve
 
 ## Notes & caveats
 
-- **Cloud-synced source dirs** (iCloud Drive, OneDrive, Dropbox): both occasionally mark setuptools' editable-install `.pth` shim as hidden, which Python 3.12.13+ then refuses to load. Spectator dodges this entirely by declaring `[tool.uv] package = false` and invoking via `python -m src` (with `PYTHONPATH=<project-root>`) — no editable install, no `.pth` shim, no hidden-file gotcha. If you'd rather host the venv outside the cloud-synced tree anyway (faster fs ops, smaller iCloud upload), set `UV_PROJECT_ENVIRONMENT=$HOME/.cache/spectator/venv` before running the wrapper.
+- **Cloud-synced source dirs**: some cloud-storage daemons occasionally mark setuptools' editable-install `.pth` shim as hidden, which Python 3.12.13+ then refuses to load. Spectator dodges this entirely by declaring `[tool.uv] package = false` and invoking via `python -m src` (with `PYTHONPATH=<project-root>`) — no editable install, no `.pth` shim, no hidden-file gotcha. If you'd rather host the venv outside the cloud-synced tree anyway (faster fs ops, smaller cloud-sync upload), set `UV_PROJECT_ENVIRONMENT=$HOME/.cache/spectator/venv` before running the wrapper.
 - **Cache cleaner location**: installed at `$workdir/bin/sys-cache-cleaner.sh` (user-space), not `/usr/local/bin/`. The script needs root to write `/proc/sys/vm/{nr_hugepages,drop_caches}`, so launch with `spectator system cache-cleaner-start` (sudo prompt) — but the script file itself doesn't pollute system bin paths.
 - **First-run image pulls**: ~30 GB total — make sure you have ≥ 50 GB free on `$HOME` of the target.
 - **Bring-up time**: 30–45 min on first `spectator up`. Subsequent `up` calls reuse the local image cache.

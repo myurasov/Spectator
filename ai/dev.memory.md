@@ -40,7 +40,7 @@ specific event. Don't reorder existing entries unless asked.
 
 - Use `./spectator install / test / lint / fmt / shell / clean` for
   the dev workflow. Never run `uv`, `pytest`, or `ruff` directly — the
-  helper script handles bootstrap and the iCloud `.pth` workaround
+  helper script handles bootstrap and the cloud-sync `.pth` workaround
   idempotently.
 - Forwarded CLI calls (`./spectator deploy …`, `./spectator audio
   transcribe …`, etc.) auto-bootstrap too. There is no `./spectator

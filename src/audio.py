@@ -109,7 +109,7 @@ QUALITY_PRESETS: dict[str, Preset] = {
     ),
     "meeting": Preset(
         name="meeting",
-        description="Default. Standard Teams/Zoom recording, mixed quality.",
+        description="Default. Standard video-conferencing recording, mixed quality.",
         model="large-v3-turbo",
         flags={
             "beam_size": 5,
