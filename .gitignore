@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+
+# Virtual envs
+.venv/
+venv/
+
+# Test / lint / type-checker caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv lockfile is intentionally NOT ignored — but lockfile generated for
+# transient bring-up runs (e.g. on the rsync target) shouldn't pollute
+# the source checkout.
+# uv.lock
+
+# Secrets — never commit credential files even if a user puts them in
+# the project dir by mistake.
+creds.txt
+.creds
+*.creds
+.env
+.env.*
+!.env.example
