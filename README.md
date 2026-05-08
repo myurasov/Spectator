@@ -1,6 +1,6 @@
 # Spectator
 
-Drop a meeting recording onto NVIDIA's [Video Search & Summarization (VSS) Blueprint](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) and get back a clean transcript or a structured summary. Spectator is a thin CLI wrapper that handles the install, deployment, and lifecycle so you can focus on the recording — not the infrastructure.
+Drop a meeting recording onto NVIDIA's [Video Search & Summarization (VSS) Blueprint](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) and get back a clean transcript or a structured summary. Spectator is a thin CLI wrapper that handles the install, deployment, and lifecycle so you can focus on work — not IT infrastructure.
 
 Copyright (c) 2026 Mikhail Yurasov. Licensed under the [Apache License 2.0](LICENSE).
 
