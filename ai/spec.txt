@@ -1,0 +1,584 @@
+================================================================================
+Spectator — specification (canonical reference for AI dev agents)
+================================================================================
+
+Version: 0.1.0
+Status:  alpha
+License: Apache 2.0
+Source:  https://github.com/myurasov/Spectator
+
+This document is the source of truth for *what Spectator is, what it does,
+and how it does it*. It is read by the dev.agent (see dev.agent.md) on
+every turn so that proposed changes stay aligned with the project's
+intent. It is intentionally plain text so that diffs are obvious and so
+that any model can render it without markdown surprises.
+
+
+--------------------------------------------------------------------------------
+1. PROBLEM AND SOLUTION
+--------------------------------------------------------------------------------
+
+PROBLEM
+  NVIDIA's Video Search & Summarization (VSS) Blueprint v3.1 is a
+  capable but operationally heavy stack. The official playbook
+  (https://build.nvidia.com/spark/vss/instructions) lists ~30 manual
+  steps to bring it up on a DGX Spark or comparable host: clone the
+  repo, log into NGC, configure the NVIDIA Container Toolkit runtime,
+  add yourself to the docker group, restart docker, set up an LLM
+  endpoint, run the right `dev-profile.sh` invocation, port-forward
+  the agent UI, etc. Each step has its own gotchas; doing them by
+  hand on a fresh machine takes the better part of a working day, and
+  re-doing them on a second machine takes another working day.
+
+  OpenAI Whisper, the obvious default for transcription, has its own
+  parallel setup: a separate venv with the right torch wheels for the
+  target GPU (cu128 for Blackwell), the right model files, the right
+  `whisper` CLI flags for clean / noisy / phone-quality audio. Most
+  Whisper invocations in practice are run by hand and tweaked one
+  flag at a time.
+
+SOLUTION
+  Spectator is a small Python CLI that automates both stacks behind a
+  uniform interface. One repo, one wrapper, one set of subcommands.
+  It does not reimplement either upstream — it just orchestrates:
+  rsync the project tree, bring up the venv with `uv`, run the right
+  install bash payload over SSH, dispatch tmux sessions, surface
+  preflight + status + logs, and call the running stacks' HTTP APIs.
+
+  Two design rules that fall out of this:
+    1. **Containment.** The default install only writes inside
+       $workdir on the target plus ~/.docker/config.json. System
+       mutations (nvidia-ctk runtime configure, docker group,
+       systemctl restart docker) live behind --apply-system. You can
+       run Spectator against a Spark you don't own and the host
+       owner's policy holds.
+    2. **Wrapper-only invocation.** `./spectator <verb>` from a fresh
+       clone bootstraps everything. No `pip install`, no `make`, no
+       `tox` — the wrapper handles it. This is on purpose: the
+       project lives under cloud-synced filesystems (iCloud Drive /
+       OneDrive) where setuptools' editable .pth shim is sometimes
+       hidden, and we want zero exposure to that.
+
+
+--------------------------------------------------------------------------------
+2. SCOPE
+--------------------------------------------------------------------------------
+
+IN SCOPE
+  * Lifecycle automation for VSS Blueprint v3.1 on hosts the user can
+    SSH into: install, deploy, up, down, status, logs, ui.
+  * Video processing through the running VSS Agent: process (upload +
+    summarize) and query (Q&A against indexed videos).
+  * Audio-only transcription via OpenAI Whisper as a sibling pipeline
+    (separate venv at $workdir/audio-venv/): install, transcribe,
+    status, fetch, presets.
+  * Preflight checks: driver, CUDA, docker, docker compose, nvidia-ctk,
+    NGC reachability.
+  * tmux orchestration so long jobs (bring-up, transcription) survive
+    SSH disconnect.
+  * `--target HOST` flag on every command — the same code paths run
+    locally or remotely.
+
+OUT OF SCOPE
+  * Modifying the upstream VSS Blueprint or Whisper. We patch one
+    thing in VSS (the agent_ui port) via sed; that's the only
+    upstream mutation, and it's reversible.
+  * Hosting the LLM ourselves. Spectator points at NVIDIA's hosted
+    NIM endpoints by default and lets server-class GPU profiles
+    (`H100`, `L40S`, `RTXPRO6000BW`) host the LLM locally — but the
+    LLM itself is upstream.
+  * GUI wrappers around the VSS Agent UI. The CLI prints an `ssh -L`
+    recipe; users open the upstream UI in their browser.
+  * Replacing tmux with a custom job-tracking system. We just call
+    `tmux new-session -d`, write a runner script, and tail the log.
+  * Real-time / streaming pipelines. VSS handles offline files;
+    Spectator orchestrates that.
+
+
+--------------------------------------------------------------------------------
+3. ARCHITECTURE
+--------------------------------------------------------------------------------
+
+Spectator is a small Python package (flat `src/` layout) plus a bash
+helper script and a few Markdown docs. The modules are intentionally
+thin and orthogonal — see [README.md](../README.md) for the user-facing
+view, [REFERENCE.md](../REFERENCE.md) for the full reference.
+
+  src/
+    __init__.py     public surface + __version__
+    __main__.py     enables `python -m src`
+    cli.py          typer entrypoint; defines top-level commands +
+                    audio + system sub-apps; main() console-script
+                    hook (used by uv-run, not registered as a script
+                    because [tool.uv] package = false)
+    config.py       constants + StackConfig dataclass; canonical
+                    place for default ports, image refs, profile
+                    names, the workdir
+    _run.py         RunResult dataclass + four primitives:
+                    run / ssh_run / ssh_one / ssh_stream
+    preflight.py    Check dataclass + collect_checks() + render();
+                    runs over either local or SSH via _run
+    install.py      _user_install_script() (default, user-space only)
+                    + _system_install_script() (--apply-system); both
+                    return bash payloads. install_local /
+                    install_remote stream the script to bash. Plus
+                    cache-cleaner start/stop helpers.
+    deploy.py       rsync_only (push source tree only) + deploy
+                    (rsync + remote uv sync + remote install)
+    stack.py        up / down / status / logs — wrap dev-profile.sh
+                    on the target via tmux
+    api.py          httpx client for the running VSS Agent: health,
+                    upload, summarize (with polling), query
+                    (OpenAI-compat chat). Three URLs, one timeout
+                    policy.
+    audio.py        Whisper sibling: Preset dataclass + 4 quality
+                    presets (studio / meeting / phone / extreme) +
+                    install_audio_venv + transcribe (uploads, runs
+                    in tmux on the target, optional follow-tail) +
+                    status + fetch + render_presets
+
+  tests/
+    __init__.py
+    test_smoke.py   pytest smoke suite — imports every module,
+                    invokes the typer app via CliRunner, exercises
+                    `--help`, `audio presets`, and StackConfig
+
+  spectator         bash helper. Sets PYTHONPATH=$HERE, runs
+                    `python -m src` under the venv. Reserved verbs:
+                    install / test / lint / fmt / shell / clean /
+                    help. Anything else is forwarded.
+
+  pyproject.toml    [project] metadata + [tool.uv] package = false +
+                    pytest + ruff config. No [build-system] (the
+                    project is not pip-installable by design).
+
+DEPENDENCIES
+  Runtime:
+    * typer  >= 0.12
+    * rich   >= 13.7
+    * httpx  >= 0.27, < 1.0
+    * PyYAML >= 6.0
+
+  Dev only:
+    * pytest >= 7.4
+    * ruff   >= 0.4
+
+  Python >= 3.10. No other runtime deps. Stdlib first.
+
+DATA FLOW (full bring-up + use)
+  1. `./spectator install` (local) — uv sync builds the project venv
+     with the four runtime deps + dev extras.
+  2. `./spectator deploy --target HOST` — rsync the project tree to
+     `~/spectator/spectator-tool/` on HOST (excluding .venv, .git,
+     caches, lockfile, secrets), run `uv sync` over SSH, then run
+     `python -m src install --workdir ~/spectator [--ngc-key ...]`.
+     The default install: clones the VSS repo into
+     `~/spectator/video-search-and-summarization/`, patches the agent
+     UI port (3000 -> 3030), writes the user-local cache cleaner to
+     `~/spectator/bin/sys-cache-cleaner.sh`, and `docker login nvcr.io`
+     with the NGC key. **Nothing outside ~/spectator/ and
+     ~/.docker/config.json is touched** unless `--apply-system` was
+     passed.
+  3. `./spectator preflight --target HOST` (recommended) — read-only
+     checks: driver version, CUDA, docker, docker compose, docker
+     group membership, nvidia-ctk install + runtime registration,
+     ffmpeg, NGC and NVIDIA API keys, disk free.
+  4. `./spectator up --target HOST` — opens a tmux session
+     `spectator-up` on the target, runs
+     `scripts/dev-profile.sh up -p base -H DGX-SPARK --use-remote-llm
+     --llm nvidia/nvidia-nemotron-nano-9b-v2 2>&1 | tee
+     ~/spectator/logs/up.log`. First run pulls ~30 GB of images and
+     takes 30-45 min; subsequent runs reuse the cache.
+  5. `./spectator process VIDEO --target HOST [--prompt ...]` —
+     uploads a video file to the running Agent (POST /files), then
+     calls /summarize, polls /jobs/<id> until succeeded/failed.
+     Returns a JSON envelope.
+  6. `./spectator query "..." --target HOST` — POST
+     /v1/chat/completions (OpenAI-compat), returns the answer text.
+  7. `./spectator audio install --target HOST` — separate from VSS.
+     Bootstraps a venv at `$workdir/audio-venv/` with torch (cu128 if
+     nvidia-smi present, CPU torch otherwise) + openai-whisper.
+     Idempotent.
+  8. `./spectator audio transcribe AUDIO --target HOST [--quality ...]`
+     — rsyncs the audio file to `$workdir/audio-in/`, builds the
+     whisper command per preset, writes a runner script to
+     `$workdir/audio-logs/<session>.sh`, kicks off
+     `tmux new-session -d`, optionally follows the log via `ssh +
+     tail -F` (Ctrl-C exits the tail, the underlying tmux session
+     keeps running). Output lands at `$workdir/audio-out/<stem>/`.
+
+ON THE TARGET (created by spectator install / audio install / up):
+  ~/spectator/                              # $workdir
+  ├── spectator-tool/                       # rsynced project tree
+  │   ├── .venv/                            # uv-managed
+  │   ├── pyproject.toml
+  │   ├── src/, tests/, ...
+  │   └── ...
+  ├── video-search-and-summarization/       # cloned VSS Blueprint
+  ├── audio-venv/                           # whisper + torch
+  ├── audio-in/                             # rsync'd audio files
+  ├── audio-out/<stem>/                     # transcripts (.txt, .srt,
+  │                                         # .vtt, .json, .tsv)
+  ├── audio-logs/                           # tmux runner scripts +
+  │                                         # whisper logs
+  ├── logs/up.log                           # VSS bring-up log
+  └── bin/sys-cache-cleaner.sh              # user-local, sudo-launched
+
+  ~/.docker/config.json                     # written by NGC docker
+                                            # login (nvcr.io)
+
+
+--------------------------------------------------------------------------------
+4. CONTAINMENT POLICY (HARD CONTRACT)
+--------------------------------------------------------------------------------
+
+Default install (no --apply-system) writes ONLY:
+  * `~/spectator/...` (configurable via --workdir)
+  * `~/.docker/config.json` (NGC docker login — user-level, not
+    system-wide)
+
+System mutations (--apply-system, all sudo-prompted on the target):
+  * `sudo nvidia-ctk runtime configure --runtime=docker`
+  * `sudo systemctl restart docker`
+  * `sudo usermod -aG docker $USER`
+
+Cache cleaner is sudo-launched separately (`./spectator system
+cache-cleaner-start`), but the script file lives at
+`~/spectator/bin/sys-cache-cleaner.sh` — not in `/usr/local/bin/`,
+deliberately, so the script itself doesn't pollute system bin paths.
+
+This is one of the project's load-bearing properties. Any new code
+that touches system state outside `--apply-system` is a bug. Any new
+subcommand that needs `sudo` should be a separate verb (like
+`./spectator system cache-cleaner-start`), not a hidden side effect.
+
+
+--------------------------------------------------------------------------------
+5. CLI SURFACE (PUBLIC CONTRACT)
+--------------------------------------------------------------------------------
+
+Top-level commands:
+  spectator help [command]
+  spectator preflight  [--target HOST]
+  spectator install    [--target HOST] [--workdir DIR] [--ngc-key KEY]
+                       [--apply-system] [--skip-preflight]
+  spectator rsync      --target HOST [--workdir DIR]
+  spectator deploy     --target HOST [--workdir DIR] [--ngc-key KEY]
+                       [--no-install]
+  spectator up         [--target HOST] [--workdir DIR] [--profile P]
+                       [--hardware H] [--llm M] [--llm-endpoint URL]
+                       [--ngc-key KEY] [--nvidia-key KEY]
+  spectator down       [--target HOST] [--workdir DIR]
+  spectator status     [--target HOST] [--workdir DIR]
+  spectator logs       [--target HOST] [--workdir DIR] [--service NAME]
+                       [--follow] [--lines N]
+  spectator ui         [--target HOST]
+  spectator process    VIDEO [--target HOST] [--prompt P] [--output F]
+  spectator query      QUESTION [--target HOST] [--file-ids ID,ID,...]
+
+audio sub-app:
+  spectator audio install    [--target HOST] [--workdir DIR]
+  spectator audio presets
+  spectator audio transcribe AUDIO [--target HOST] [--workdir DIR]
+                             [--quality {studio|meeting|phone|extreme}]
+                             [--model M] [--language L] [--task T]
+                             [--clip "start,end[,start,end...]"]
+                             [--initial-prompt P] [--session NAME]
+                             [--detach/--no-detach]
+                             [--follow/--no-follow]
+                             [--skip-upload]
+  spectator audio status     [--target HOST] [--workdir DIR]
+  spectator audio fetch      [--target HOST] [--workdir DIR]
+                             [--output DIR] [--only NAME]
+
+system sub-app (sudo on target):
+  spectator system cache-cleaner-start [--target HOST] [--workdir DIR]
+  spectator system cache-cleaner-stop  [--target HOST]
+
+GLOBAL CONTRACTS
+  * `--target HOST` is an SSH alias. Without it, the command runs
+    locally. SAME flag name, SAME semantics, on every command.
+  * `--workdir` defaults to `~/spectator`. Not currently relocatable
+    to a path with shell metacharacters (no spaces in the basename
+    yet). Edge-case-test target.
+  * Adding a new top-level command or sub-app is a contract change —
+    document it in dev.agent.md and dev.memory.md and ask before
+    shipping. Renaming or removing an existing one needs a deprecation
+    note in the same PR.
+
+EXIT CODES
+  * 0 — success
+  * 1 — generic failure (an underlying RunResult.rc != 0, an HTTP
+    non-2xx, a tmux conflict, ...)
+  * 2 — user error (typer's default for usage errors; also used by
+    `process` when the VSS Agent isn't reachable, by `audio
+    transcribe` for unknown quality preset)
+
+  No formal ExitCode enum yet (Spectator is younger than slackwright).
+  When the surface stabilizes, promote these to a documented enum in
+  the same shape — agents will key off it. (Future work; flagged in
+  dev.memory.md.)
+
+
+--------------------------------------------------------------------------------
+6. AUDIO-PIPELINE DETAIL
+--------------------------------------------------------------------------------
+
+Quality presets (audio.py):
+  * studio   — large-v3-turbo, beam=1, greedy. Clean studio mic.
+  * meeting  — large-v3-turbo, beam=5, temperature fallback.
+               DEFAULT. Teams / Zoom / Webex recordings.
+  * phone    — large-v3, beam=5, no_speech_threshold=0.6.
+               Voice-coded / low-bitrate.
+  * extreme  — large-v3, beam=10, patience=2.0,
+               no_speech_threshold=0.7, compression_ratio_threshold=2.4.
+               Distant mic, heavy noise, crosstalk.
+
+Override knobs:
+  * --model M           — replace the preset's model (any whisper
+                          model name). For non-English audio, prefer
+                          large-v3 over large-v3-turbo.
+  * --language L        — ISO-639-1 (en|es|ru|hi|ja|zh|fr|de|pt|...).
+                          Unset (or "auto") drops the flag entirely
+                          so Whisper auto-detects per 30s window —
+                          the right behavior for bilingual /
+                          code-switched audio.
+  * --task TASK         — "transcribe" (default, same language) or
+                          "translate" (renders source language as
+                          English in the transcript, timestamps
+                          preserved).
+  * --clip "0,2700"     — process only the first 45 min, etc.
+                          Comma-separated start,end pairs in seconds.
+  * --initial-prompt P  — vocabulary biasing (technical terms, names).
+  * --session NAME      — tmux session name (default derived from
+                          audio filename stem with non-alnum chars
+                          mapped to "-", capped at 40 chars).
+
+Output layout (under $workdir/audio-out/<stem>/):
+  * <stem>.txt          — plain text
+  * <stem>.srt          — SRT subtitles
+  * <stem>.vtt          — WebVTT
+  * <stem>.json         — structured (segments + word timestamps)
+  * <stem>.tsv          — tab-separated
+
+(Whisper writes all of these when `--output_format all` is passed,
+which the preset machinery does by default.)
+
+Lifecycle:
+  * `./spectator audio install` — idempotent; skipped if
+    `import torch / whisper` already works.
+  * `./spectator audio transcribe AUDIO --target HOST` — uploads
+    (rsync), launches in tmux, optionally follows the log. Ctrl-C
+    on the follow only detaches; the tmux session keeps running.
+  * `./spectator audio status --target HOST` — list running tmux
+    `audio-*` sessions + recent log lines + completed transcripts.
+  * `./spectator audio fetch --target HOST -o DIR` — rsync
+    `$workdir/audio-out/` back. `--only NAME` fetches one
+    transcript subdir.
+
+There is currently no auto-cleanup of `audio-in/` or `audio-out/`
+on the target. That's intentional — the maintainer wants explicit
+control. If a future feature adds GC, it should be opt-in
+(`--prune` flag), not silent.
+
+
+--------------------------------------------------------------------------------
+7. VIDEO-PIPELINE DETAIL
+--------------------------------------------------------------------------------
+
+The video pipeline is a thin client over the VSS Agent's HTTP API.
+Three endpoints, all on the agent's port (default 8000):
+
+  * POST /files         — multipart upload, returns {"id": "F_..."}
+                          or similar. api.upload() handles the response
+                          shape variation; if it can't find an id key,
+                          it raises RuntimeError with the response body.
+  * POST /summarize     — body {"file_id": "...", "prompt": "..."},
+                          returns either an inline result or a
+                          {"job_id": "..."} that we poll at
+                          /jobs/<id> until status is succeeded /
+                          completed / done. Polling timeout is
+                          1800s (30 min) by default.
+  * POST /v1/chat/completions
+                        — OpenAI-compat. We send a system prompt that
+                          tells the model to cite timestamps + the
+                          user's question. file_ids in the request
+                          body scopes the search.
+
+Health is probed via GET /health (timeout 5s). If health fails,
+`process` and `query` exit with code 2 and tell the user to check
+status / SSH-forward the port.
+
+The Agent UI (port 3030 after our patch) is a separate service. We
+don't talk to it directly; `./spectator ui` just prints an `ssh -L`
+recipe.
+
+
+--------------------------------------------------------------------------------
+8. INSTALL DETAIL (THE BASH PAYLOAD)
+--------------------------------------------------------------------------------
+
+`install.py` builds a multi-section bash script and streams it to
+`bash -s` (locally) or `ssh HOST bash -s` (remotely). Sections, in
+order:
+
+  1. workdir + repo clone
+       * mkdir -p $workdir, cd into it
+       * if VSS checkout exists: revert patched files, fetch, pull
+       * else: git clone https://github.com/NVIDIA-AI-Blueprints/
+         video-search-and-summarization.git
+
+  2. agent_ui port patch (idempotent, sed -i.bak)
+       * deployments/agents/agent_ui/compose.yml:
+         "- 3000:3000" -> "- ${VSS_UI_PORT:-3030}:3000"
+       * deployments/proxy/nginx.conf.template:
+         "proxy_pass http://127.0.0.1:3000;" ->
+         "proxy_pass http://127.0.0.1:${VSS_UI_PORT};"
+       * deployments/proxy/compose.yml: add VSS_UI_PORT to environment
+         and the envsubst whitelist.
+
+  3. user-local cache cleaner
+       * cat > $workdir/bin/sys-cache-cleaner.sh <<'EOF' ...
+       * chmod +x
+
+  4. NGC docker login (only if NGC_CLI_API_KEY is set)
+       * echo $NGC_CLI_API_KEY | docker login --username '$oauthtoken'
+         --password-stdin nvcr.io
+       * Skipped with a warning if docker isn't installed or the
+         current user can't reach the daemon (group-membership issue).
+
+  5. summary
+       * print VSS checkout path + cache cleaner path + suggested
+         next steps (preflight / up).
+
+If --apply-system was passed, an additional section runs (sudo'd):
+  * nvidia-ctk runtime configure (if not already registered)
+  * systemctl restart docker
+  * usermod -aG docker $USER
+
+Adding new install steps: keep them idempotent (re-running the
+install must not duplicate state), keep them under containment unless
+they're explicitly system-level, and keep the bash inside
+textwrap.dedent() blocks so the literal source reads cleanly.
+
+
+--------------------------------------------------------------------------------
+9. PUBLICATION
+--------------------------------------------------------------------------------
+
+* Canonical repo: https://github.com/myurasov/Spectator
+* License: Apache 2.0 ([LICENSE](../LICENSE))
+* Releases: tagged `vX.Y.Z` (annotated), exposed via `gh release create`
+* Version of record: `pyproject.toml [project].version` and
+  `src/__init__.py`'s `__version__` — must stay in sync.
+* DCO sign-off (`git commit -s`) required on every commit. See
+  [CONTRIBUTING.md](../CONTRIBUTING.md).
+* Security disclosures: private — see [SECURITY.md](../SECURITY.md).
+* Third-party dep attributions: [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+
+--------------------------------------------------------------------------------
+10. TEST SUITE
+--------------------------------------------------------------------------------
+
+Current baseline: `tests/test_smoke.py` only — 5 test functions:
+  * test_public_module_imports (parametrized over 9 modules)
+  * test_cli_help_runs
+  * test_audio_presets_subcommand_runs
+  * test_stack_config_round_trips_overrides
+  * test_version_attribute_present
+
+These are smoke checks: import every module, exercise the typer app
+via CliRunner, confirm the audio-presets table renders, confirm
+StackConfig.from_env round-trips overrides. They don't talk to a
+real VSS stack, GPU, or SSH host.
+
+Adding tests: behavior-changing PRs always add or update tests.
+Use Typer's CliRunner for CLI surface tests. Mock `_run.run` /
+`_run.ssh_run` (they return a `RunResult`; easy to fake) when a test
+needs to exercise install / preflight / stack code paths. Don't add
+tests that require a live GPU host in the default suite — those are
+the user's manual integration runs.
+
+
+--------------------------------------------------------------------------------
+11. CONVENTIONS THAT ARE EASY TO BREAK
+--------------------------------------------------------------------------------
+
+* The wrapper's `show_help()` uses `sed -n '5,28p'` to print lines
+  5-28 of itself as help text. If you reorder the comment block at
+  the top of the wrapper, update those line numbers.
+* SPDX header on every new .py file (and the wrapper). See dev.memory.md.
+* `from __future__ import annotations` at the top of every .py with
+  type hints.
+* Comments above commands in bash blocks across all docs (README,
+  REFERENCE, AGENTS, CONTRIBUTING). Trailing comments are banned.
+  Layout-tree annotations (`├── path  # description`) are the one
+  exception.
+* `--target <gpu-machine>` is the placeholder in examples; `HOST` is
+  the metavar in formal subcommand-reference tables.
+* Capitalize "Spectator" in English prose only. Lowercase in commands,
+  paths, identifiers, env vars.
+* Internal package imports use relative form (`from . import config`,
+  `from ._run import ssh_run`). Don't sprinkle absolute `from src.X`
+  imports inside the package.
+* No third-party deps without explicit user approval. The four
+  runtime + two dev deps in `pyproject.toml` are it.
+* Force-pushes to `main` need explicit user approval.
+* Don't `gh repo delete` anything without the user explicitly
+  asking. (Both `gh` tokens lack `delete_repo` scope anyway, so it
+  would fail — but the rule still holds.)
+
+
+--------------------------------------------------------------------------------
+12. KNOWN GOTCHAS / EDGE CASES
+--------------------------------------------------------------------------------
+
+* iCloud Drive / OneDrive sometimes mark setuptools' editable .pth
+  shim as hidden, which Python 3.12.13+ refuses to load. Spectator
+  sidesteps the entire class of issues by being not-pip-installable
+  ([tool.uv] package = false) and invoking via `python -m src` with
+  PYTHONPATH=$HERE. If a user reports import weirdness, suspect this.
+
+* The wrapper's `[ "pyproject.toml" -nt "$INSTALL_STAMP" ]` mtime
+  check: iCloud sometimes rewrites mtimes when syncing. False positive
+  re-syncs are harmless (just slower); false negatives would miss a
+  real dependency change. Pin to `--force` if you suspect.
+
+* ssh-config Host alias mismatch: every `--target HOST` command
+  expects HOST to be resolvable as an SSH alias (~/.ssh/config). If
+  it's a raw hostname or IP, that works too as long as keys are set
+  up. The user's preferred convention is to use the alias, with
+  multiplexing + keepalives in the SSH config — see
+  [REFERENCE.md § SSH access](../REFERENCE.md#ssh-access-for---target-flows).
+
+* Filenames with spaces in --workdir or in audio names: most code
+  paths use shlex.quote / `_bash_dq` correctly, but corner cases may
+  exist. Edge-case-test target.
+
+* tmux session naming: audio.py derives the session name from the
+  audio filename's stem with non-alnum chars mapped to `-`, capped at
+  40 chars. Two files with the same first 40 normalized chars will
+  collide and the second `audio transcribe` will fail with "session
+  already running". Pass `--session NAME` to override.
+
+* `process` requires the video to be at a path the VSS Agent can
+  read on the target host — not your laptop's filesystem. The
+  `process` command warns if --target is set and the video path isn't
+  absolute.
+
+* The patched UI port (3030 instead of upstream's hardcoded 3000) is
+  applied via sed during install. If upstream changes the compose
+  file's structure, the sed patches in install.py need updating.
+  When `up` fails with "agent_ui not reachable on 3030", check
+  whether the patches still match upstream.
+
+* AGENT_UI_PORT vs UI_PORT: `config.py` defines `UI_PORT = 3030`,
+  not `AGENT_UI_PORT`. If you see references to `config.AGENT_UI_PORT`
+  in the install bash payload, that's a pre-existing typo to fix —
+  the value should be `config.UI_PORT`.
+
+
+--------------------------------------------------------------------------------
+END OF SPEC
+--------------------------------------------------------------------------------
