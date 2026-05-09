@@ -75,7 +75,7 @@ def _user_install_script(workdir: str, vss_checkout: str,
         fi
 
         # ---- 1b. Free-up-port-3000 patch ----
-        # Upstream agent_ui hardcodes host port 3000; we make it ${{VSS_UI_PORT:-{config.AGENT_UI_PORT}}}
+        # Upstream agent_ui hardcodes host port 3000; we make it ${{VSS_UI_PORT:-{config.UI_PORT}}}
         # so the user's other tooling (whatsapp bridges, dev servers, etc) can keep 3000.
         # Also patches the proxy nginx upstream and envsubst list to follow.
         AGENT_UI_COMPOSE="{vss_checkout}/deployments/agents/agent_ui/compose.yml"
@@ -83,8 +83,8 @@ def _user_install_script(workdir: str, vss_checkout: str,
         PROXY_COMPOSE="{vss_checkout}/deployments/proxy/compose.yml"
 
         if [ -f "$AGENT_UI_COMPOSE" ] && grep -q "^      - 3000:3000$" "$AGENT_UI_COMPOSE"; then
-          echo "==== patching agent_ui host port 3000 -> \\${{VSS_UI_PORT:-{config.AGENT_UI_PORT}}} ===="
-          sed -i.bak 's|- 3000:3000|- ${{VSS_UI_PORT:-{config.AGENT_UI_PORT}}}:3000|' "$AGENT_UI_COMPOSE"
+          echo "==== patching agent_ui host port 3000 -> \\${{VSS_UI_PORT:-{config.UI_PORT}}} ===="
+          sed -i.bak 's|- 3000:3000|- ${{VSS_UI_PORT:-{config.UI_PORT}}}:3000|' "$AGENT_UI_COMPOSE"
         fi
         if [ -f "$PROXY_TEMPLATE" ] && grep -q "proxy_pass http://127.0.0.1:3000;" "$PROXY_TEMPLATE"; then
           echo "==== patching proxy upstream 127.0.0.1:3000 -> 127.0.0.1:\\$VSS_UI_PORT ===="
@@ -93,7 +93,7 @@ def _user_install_script(workdir: str, vss_checkout: str,
         if [ -f "$PROXY_COMPOSE" ]; then
           if ! grep -q "VSS_UI_PORT:" "$PROXY_COMPOSE"; then
             echo "==== adding VSS_UI_PORT to proxy environment ===="
-            sed -i.bak '/PROXY_PORT: \\${{PROXY_PORT:-7777}}/a\\      VSS_UI_PORT: \\${{VSS_UI_PORT:-{config.AGENT_UI_PORT}}}' "$PROXY_COMPOSE"
+            sed -i.bak '/PROXY_PORT: \\${{PROXY_PORT:-7777}}/a\\      VSS_UI_PORT: \\${{VSS_UI_PORT:-{config.UI_PORT}}}' "$PROXY_COMPOSE"
           fi
           if ! grep -q '\\$\\$VSS_UI_PORT' "$PROXY_COMPOSE"; then
             echo "==== teaching proxy envsubst about VSS_UI_PORT ===="
