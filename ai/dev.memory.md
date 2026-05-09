@@ -166,7 +166,9 @@ specific event. Don't reorder existing entries unless asked.
 ## Dependencies
 
 - Runtime deps: `typer >= 0.12`, `rich >= 13.7`, `httpx >= 0.27`,
-  `PyYAML >= 6.0`. **Always ask before adding another.**
+  `PyYAML >= 6.0`, plus the Web UI trio added in v0.2.0:
+  `fastapi >= 0.110`, `uvicorn[standard] >= 0.30`, `python-multipart
+  >= 0.0.9`. **Always ask before adding another.**
 - Dev deps: `pytest >= 7.4`, `ruff >= 0.4`. Same rule.
 - Stdlib first.
 - When deps change in `pyproject.toml`, update

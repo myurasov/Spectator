@@ -16,6 +16,7 @@ Detailed reference for Spectator. For the friendly setup walk-through (designed 
   - [4. Process a video via the CLI](#4-process-a-video-via-the-cli)
   - [5. Audio-only transcription (Whisper)](#5-audio-only-transcription-whisper)
   - [6. Iterative development](#6-iterative-development)
+- [Web UI](#web-ui)
 - [Subcommand reference](#subcommand-reference)
 - [Required env vars / keys](#required-env-vars--keys)
 - [Hardware profiles](#hardware-profiles)
@@ -238,6 +239,124 @@ When you're editing Spectator's own source and just want to push code changes (n
 
 Use `./spectator deploy …` when you've changed `pyproject.toml` (deps) or want a full re-install.
 
+## Web UI
+
+`spectator ui-server start` launches a long-lived FastAPI service (uvicorn) that wraps Spectator's CLI behind a single-page UI. Drag-drop upload, live progress per job, VSS lifecycle controls, output download, video / audio Q&A. The server is detached from the launching shell and survives `Ctrl-C`; its PID is tracked at `$workdir/ui-server/server.pid`.
+
+### Lifecycle commands
+
+```bash
+# default: bind 127.0.0.1:7777 against the local target
+./spectator ui-server start
+
+# remote target — all jobs submitted via the UI will use this SSH alias
+./spectator ui-server start --target <gpu-machine>
+
+# expose on the LAN — no built-in auth, only do this on a network you trust
+./spectator ui-server start --bind 0.0.0.0 --port 7777
+
+./spectator ui-server status
+./spectator ui-server logs --follow
+./spectator ui-server stop
+```
+
+### State layout (under `$workdir/ui-server/`)
+
+- `server.pid` — current server's PID (used by `stop` / `status`)
+- `server.log` — uvicorn stdout / stderr; tailed by `ui-server logs`
+- `jobs/<uuid>.json` — one persistent JSON file per job (the schema is the public contract for any agent watching alongside the UI)
+- `jobs/<uuid>.log` — captured stdout / stderr of the spawned subprocess (audio transcribe, video process)
+- `uploads/` — uploaded files; audio jobs are then copied to `$workdir/audio-in/<basename>` for Spectator to pick up
+
+### HTTP surface (REST + WebSocket)
+
+| Method + path | Purpose |
+|---|---|
+| `GET  /` | single-page UI (static HTML/JS/CSS) |
+| `GET  /api/status` | overall: VSS reachable, audio-venv installed (local), jobs in flight |
+| `POST /api/vss/up` / `down` | lifecycle wrappers around `spectator up` / `down` |
+| `GET  /api/vss/status` | wrapper around `spectator status` |
+| `GET  /api/jobs` | list all jobs (newest first) |
+| `POST /api/jobs` | multipart upload + form params; spawns `spectator audio transcribe` or `spectator process` |
+| `GET  /api/jobs/{id}` | single-job detail incl. metrics and PID |
+| `DELETE /api/jobs/{id}` | kill (SIGTERM the subprocess group, `tmux kill-session` for remote) |
+| `GET  /api/jobs/{id}/log` | tail of the subprocess log (default last 64 KB) |
+| `GET  /api/jobs/{id}/output/{filename}` | download an output file (path-traversal-blocked) |
+| `WS   /api/jobs/{id}/progress` | live JSON snapshots (~every 2 s) — segments processed, rt-factor, ETA, device, finished/exit-code |
+| `POST /api/query/video` | body `{question, file_ids?}` — proxies to VSS's `/v1/chat/completions` |
+| `POST /api/query/audio` | body `{job_id, question}` — feeds the completed audio job's transcript text to the same NIM endpoint VSS uses (needs `NVIDIA_API_KEY` in the server's environment) |
+
+The `/api/jobs` form fields:
+
+| Field | Required | Notes |
+|---|---|---|
+| `kind` | yes | `audio` or `video` |
+| `file` | yes | the audio / video upload (multipart) |
+| `quality` | no (audio) | Spectator preset: `studio` / `meeting` / `phone` / `extreme` |
+| `language` | no (audio) | ISO-639-1 code; omit for auto-detect |
+| `task` | no (audio) | `transcribe` (default) or `translate` |
+| `model` | no | override model name |
+| `device` | no | force `cuda` / `mps` / `cpu` |
+| `prompt` | no (video) | summarization prompt |
+
+### Security defaults
+
+- **Bind**: `127.0.0.1` (localhost-only) — the UI has no auth. Pass `--bind 0.0.0.0` only on a network you trust.
+- **No CSRF**: the API is plain JSON / multipart; we assume same-origin from the bundled UI. Don't expose this to browsers from third-party sites.
+- **No write outside `$workdir`**: jobs follow Spectator's containment policy; the UI doesn't relax it.
+
+### Live performance metrics
+
+The WebSocket payload at `/api/jobs/{id}/progress` looks like:
+
+```json
+{
+  "job_id": "...",
+  "kind": "audio",
+  "status": "running",
+  "snapshot": {
+    "audio_duration_s": 4522.0,
+    "processed_s": 765.3,
+    "wall_clock_s": 252.1,
+    "rt_factor": 3.04,
+    "percent": 16.93,
+    "eta_s": 1235.4,
+    "device": "mps",
+    "finished": false,
+    "exit_code": null
+  },
+  "audio_duration_human": "1h 15m 22s",
+  "processed_human": "12m 45s",
+  "wall_clock_human": "4m 12s",
+  "eta_human": "20m 35s"
+}
+```
+
+The frontend updates the per-job row's progress bar, rt-factor, wall-clock, and ETA cells in place. When `finished: true` the snapshot includes the exit code and the WebSocket closes; the ledger transitions the job to `completed` (rc=0) or `failed` (rc≠0) and the row's status pill updates on the next poll.
+
+### Backend / frontend code layout
+
+```
+src/webui/
+├── __init__.py
+├── _launch.py             # uvicorn-importable; reads SPECTATOR_UI_{WORKDIR,TARGET}
+├── server.py              # create_app() factory + state-paths helper
+├── jobs.py                # Job dataclass + JobLedger persistence
+├── pipeline.py            # subprocess wrapper for audio / video; PID + tmux kill
+├── progress.py            # whisper-segment parser + ffprobe duration probe
+├── routes/
+│   ├── __init__.py
+│   ├── status.py          # GET /api/status
+│   ├── vss.py             # /api/vss/up | down | status
+│   ├── jobs.py            # POST/GET/DELETE /api/jobs[/{id}], log, output
+│   ├── ws.py              # WS /api/jobs/{id}/progress
+│   └── query.py           # POST /api/query/{video,audio}
+└── static/
+    ├── index.html         # single-page UI
+    ├── app.js             # vanilla JS — no framework, no build step
+    └── style.css
+```
+
 ## Subcommand reference
 
 | Command | What it does |
@@ -262,6 +381,10 @@ Use `./spectator deploy …` when you've changed `pyproject.toml` (deps) or want
 | `spectator audio fetch [--target HOST] -o DIR` | rsync `$workdir/audio-out/` back to a local dir |
 | `spectator system cache-cleaner-start [--target HOST]` | sudo-launch the user-local cache cleaner in the background |
 | `spectator system cache-cleaner-stop [--target HOST]` | sudo pkill the cache cleaner |
+| `spectator ui-server start [--port N] [--bind ADDR] [--target HOST]` | start the persistent Web UI server (detached uvicorn process); see [Web UI](#web-ui) |
+| `spectator ui-server stop` | SIGTERM the running Web UI server |
+| `spectator ui-server status` | report whether the Web UI is running + state-dir paths |
+| `spectator ui-server logs [--follow] [--lines N]` | tail the Web UI server's log |
 
 All commands accept `--target HOST` (an SSH alias). Without `--target`, the command runs on the local machine.
 

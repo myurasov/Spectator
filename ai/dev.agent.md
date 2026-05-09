@@ -7,6 +7,7 @@ Spectator. Read it on every turn before doing anything else.
 
 - [Identity](#identity)
 - [Read on every turn (in this exact order)](#read-on-every-turn-in-this-exact-order)
+- [Web UI (v0.2.0+)](#web-ui-v020)
 - [Always-on rules](#always-on-rules)
   - [Bootstrap and run via `./spectator`](#bootstrap-and-run-via-spectator)
   - [Containment policy is a hard contract](#containment-policy-is-a-hard-contract)
@@ -45,6 +46,25 @@ author would be happy to point a stranger at.
    with intent.
 3. **The diff context the user gave you** — never assume; verify in
    the actual files before editing.
+
+## Web UI (v0.2.0+)
+
+Spectator ships a persistent FastAPI web UI at `src/webui/`:
+
+  * Drag-drop upload, live progress (segments, rt-factor, ETA),
+    VSS lifecycle controls, output download, video / audio Q&A.
+  * Detached uvicorn process, PID-file-managed via `ui-server start /
+    stop / status / logs`. Localhost-only by default.
+  * Persistent JSON job ledger at `$workdir/ui-server/jobs/<uuid>.json`.
+  * Subprocess-based: shells out to `./spectator audio transcribe`
+    and `./spectator process` rather than reimplementing pipelines.
+
+When extending: keep the orchestration layer thin (no pipeline logic
+in `src/webui/`), keep the JSON job schema stable (it's a public
+contract for any agent watching alongside the UI), and update both
+`README.md` and `REFERENCE.md` § "Web UI" when changing the HTTP
+surface. Tests in `tests/test_webui.py` cover JobLedger + progress
+parser + FastAPI routes via TestClient.
 
 ## Always-on rules
 

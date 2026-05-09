@@ -1,6 +1,6 @@
 [project]
 name = "spectator"
-version = "0.1.1"
+version = "0.2.0"
 description = "Thin CLI wrapper around NVIDIA's Video Search & Summarization (VSS) Blueprint v3.1, with a sibling Whisper audio pipeline. Designed for DGX Spark (GB10), works on any v3.1-supported host."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -42,6 +42,12 @@ dependencies = [
     "rich>=13.7",
     "httpx>=0.27,<1.0",
     "pyyaml>=6.0",
+    # Web UI server (introduced in v0.2.0). All three are well-established
+    # mainstream picks; FastAPI is the primary, uvicorn is its ASGI runner,
+    # python-multipart is FastAPI's optional file-upload dep (made explicit).
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

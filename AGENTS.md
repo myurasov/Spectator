@@ -43,6 +43,9 @@ Apache 2.0 licensed. User-facing surface (pipes mean "any one of"):
 # system helpers (sudo, opt-in)
 ./spectator system cache-cleaner-start | cache-cleaner-stop
 
+# persistent web UI (FastAPI; v0.2.0+)
+./spectator ui-server start | stop | status | logs
+
 # dev workflow (handled by the wrapper itself, not forwarded)
 ./spectator install | test | lint | fmt | shell | clean | help
 ```

@@ -27,10 +27,12 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# uv lockfile is intentionally NOT ignored — but lockfile generated for
-# transient bring-up runs (e.g. on the rsync target) shouldn't pollute
-# the source checkout.
-# uv.lock
+# uv lockfile. The project declares [tool.uv] package = false (it's not
+# pip-installable by design), so the lockfile only captures the dev
+# environment and isn't load-bearing for end users. uv generates it as
+# a side-effect of `uv pip install` / `uv sync`, but committing it would
+# couple every contributor to one resolved set of transitive versions.
+uv.lock
 
 # Secrets — never commit credential files even if a user puts them in
 # the project dir by mistake.

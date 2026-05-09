@@ -12,6 +12,9 @@ These packages are required for Spectator to run. They are pulled at install tim
 | [rich](https://github.com/Textualize/rich) | MIT | https://github.com/Textualize/rich |
 | [httpx](https://github.com/encode/httpx) | BSD-3-Clause | https://github.com/encode/httpx |
 | [PyYAML](https://github.com/yaml/pyyaml) | MIT | https://github.com/yaml/pyyaml |
+| [fastapi](https://github.com/fastapi/fastapi) (v0.2.0+) | MIT | https://github.com/fastapi/fastapi |
+| [uvicorn](https://github.com/encode/uvicorn) (v0.2.0+) | BSD-3-Clause | https://github.com/encode/uvicorn |
+| [python-multipart](https://github.com/Kludex/python-multipart) (v0.2.0+) | Apache-2.0 | https://github.com/Kludex/python-multipart |
 
 ## Development dependencies
 

@@ -2,7 +2,7 @@
 Spectator — specification (canonical reference for AI dev agents)
 ================================================================================
 
-Version: 0.1.1
+Version: 0.2.0
 Status:  alpha
 License: Apache 2.0
 Source:  https://github.com/myurasov/Spectator
@@ -135,13 +135,43 @@ view, [REFERENCE.md](../REFERENCE.md) for the full reference.
                     presets (studio / meeting / phone / extreme) +
                     install_audio_venv + transcribe (uploads, runs
                     in tmux on the target, optional follow-tail) +
-                    status + fetch + render_presets
+                    status + fetch + render_presets +
+                    _detect_device (cuda > mps > cpu) + VALID_DEVICES
+    webui/          Persistent FastAPI Web UI added in v0.2.0.
+      __init__.py   DEFAULT_PORT / DEFAULT_BIND constants + module doc
+      _launch.py    uvicorn-importable; reads SPECTATOR_UI_{WORKDIR,
+                    TARGET} env vars and calls server.create_app()
+      server.py     create_app(workdir, target) factory; lifespan
+                    rehydrates JobLedger + mounts static files
+      jobs.py       Job dataclass + JobLedger persistence (atomic
+                    JSON-per-job; rehydrates on startup)
+      pipeline.py   Subprocess wrappers — spawn_audio_transcribe,
+                    spawn_video_process, kill_pid, kill_remote_tmux,
+                    fetch_audio_outputs_from_remote
+      progress.py   ProgressSnapshot + parse_log (whisper segment
+                    regex) + probe_duration (ffprobe) + format_duration
+      routes/       FastAPI routers, one per concern:
+                      status.py — GET /api/status
+                      vss.py    — POST /api/vss/{up,down}, GET status
+                      jobs.py   — POST/GET/DELETE /api/jobs[/{id}]
+                                  + /log + /output/{filename}
+                      ws.py     — WebSocket /api/jobs/{id}/progress
+                      query.py  — POST /api/query/{video,audio}
+      static/       Vanilla single-page UI (no framework, no build):
+                      index.html — drag-drop + jobs table + query box
+                      app.js     — REST polling + WebSocket per job
+                      style.css  — CSS-vars theme (light + dark)
 
   tests/
     __init__.py
     test_smoke.py   pytest smoke suite — imports every module,
                     invokes the typer app via CliRunner, exercises
                     `--help`, `audio presets`, and StackConfig
+    test_webui.py   v0.2.0 — JobLedger persistence, progress parser
+                    (running / finished / long-form timestamps /
+                    no-duration), FastAPI route smoke tests via
+                    TestClient (status, list, submit, 404, 400,
+                    path-traversal)
 
   spectator         bash helper. Sets PYTHONPATH=$HERE, runs
                     `python -m src` under the venv. Reserved verbs:
@@ -153,11 +183,16 @@ view, [REFERENCE.md](../REFERENCE.md) for the full reference.
                     project is not pip-installable by design).
 
 DEPENDENCIES
-  Runtime:
+  Runtime (v0.1.x):
     * typer  >= 0.12
     * rich   >= 13.7
     * httpx  >= 0.27, < 1.0
     * PyYAML >= 6.0
+
+  Runtime (added in v0.2.0 — Web UI):
+    * fastapi          >= 0.110, < 1.0
+    * uvicorn[standard] >= 0.30, < 1.0
+    * python-multipart >= 0.0.9
 
   Dev only:
     * pytest >= 7.4
@@ -294,6 +329,19 @@ audio sub-app:
 system sub-app (sudo on target):
   spectator system cache-cleaner-start [--target HOST] [--workdir DIR]
   spectator system cache-cleaner-stop  [--target HOST]
+
+ui-server sub-app (persistent web UI, v0.2.0+):
+  spectator ui-server start  [--port N] [--bind ADDR] [--target HOST]
+                             [--workdir DIR]
+  spectator ui-server stop   [--workdir DIR]
+  spectator ui-server status [--workdir DIR]
+  spectator ui-server logs   [--workdir DIR] [--follow] [--lines N]
+
+  start spawns a detached `python -m uvicorn src.webui._launch:app`
+  process, writes its PID to <workdir>/ui-server/server.pid, and
+  redirects stdout/stderr to <workdir>/ui-server/server.log. The Web
+  UI is localhost-only (--bind 127.0.0.1) by default; pass
+  --bind 0.0.0.0 to expose on the LAN (no built-in auth).
 
 GLOBAL CONTRACTS
   * `--target HOST` is an SSH alias. Without it, the command runs

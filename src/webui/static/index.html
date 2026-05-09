@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 Mikhail Yurasov
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spectator — Web UI</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Spectator</h1>
+    <div class="status" id="status-bar">
+      <span class="status-pill" id="status-target">target: …</span>
+      <span class="status-pill" id="status-vss">VSS: …</span>
+      <span class="status-pill" id="status-audio">audio-venv: …</span>
+      <span class="status-pill" id="status-jobs">jobs: …</span>
+      <span class="status-version" id="status-version"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel" id="panel-vss">
+      <h2>VSS stack</h2>
+      <p class="muted">Bring the Video Search &amp; Summarization stack up or down on the configured target. First-time bring-up is ~30–45 minutes.</p>
+      <div class="row">
+        <button id="btn-vss-up" class="primary">Start VSS</button>
+        <button id="btn-vss-down" class="danger">Stop VSS</button>
+        <button id="btn-vss-status">Refresh status</button>
+      </div>
+      <pre class="log" id="vss-output">(no output yet)</pre>
+    </section>
+
+    <section class="panel" id="panel-submit">
+      <h2>Submit a new job</h2>
+      <form id="form-submit" enctype="multipart/form-data">
+        <div class="dropzone" id="dropzone">
+          <p>Drop an audio or video file here, or <label class="link">browse <input type="file" name="file" id="file-input" hidden></label>.</p>
+          <p class="muted small" id="selected-file">no file selected</p>
+        </div>
+        <div class="row">
+          <label>Kind:
+            <select name="kind" id="kind-select">
+              <option value="audio" selected>audio (Whisper)</option>
+              <option value="video">video (VSS)</option>
+            </select>
+          </label>
+        </div>
+        <div class="row audio-only">
+          <label>Quality:
+            <select name="quality">
+              <option value="">(auto from config)</option>
+              <option value="studio">studio</option>
+              <option value="meeting" selected>meeting</option>
+              <option value="phone">phone</option>
+              <option value="extreme">extreme</option>
+            </select>
+          </label>
+          <label>Language: <input type="text" name="language" placeholder="auto-detect" size="10"></label>
+          <label>Task:
+            <select name="task">
+              <option value="transcribe" selected>transcribe</option>
+              <option value="translate">translate to English</option>
+            </select>
+          </label>
+          <label>Model: <input type="text" name="model" placeholder="auto" size="14"></label>
+          <label>Device:
+            <select name="device">
+              <option value="" selected>auto</option>
+              <option value="cuda">cuda</option>
+              <option value="mps">mps</option>
+              <option value="cpu">cpu</option>
+            </select>
+          </label>
+        </div>
+        <div class="row video-only" hidden>
+          <label class="grow">Prompt:
+            <input type="text" name="prompt" placeholder="Summarize the meeting; list action items with timestamps." class="grow">
+          </label>
+        </div>
+        <div class="row">
+          <button type="submit" class="primary">Submit job</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" id="panel-jobs">
+      <h2>Jobs</h2>
+      <p class="muted">Submitted jobs and their live progress. Click a job to expand the log.</p>
+      <table class="jobs-table" id="jobs-table">
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>Kind</th>
+            <th>Status</th>
+            <th>Progress</th>
+            <th>rt-factor</th>
+            <th>Wall-clock</th>
+            <th>ETA</th>
+            <th>Outputs</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="jobs-tbody">
+          <tr><td colspan="9" class="muted">(no jobs yet — submit one above)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="panel-query">
+      <h2>Query</h2>
+      <p class="muted">Ask questions against indexed videos (VSS) or against a completed audio job's transcript.</p>
+      <form id="form-query">
+        <div class="row">
+          <label>Source:
+            <select id="query-kind">
+              <option value="video" selected>video (VSS)</option>
+              <option value="audio">audio (transcript)</option>
+            </select>
+          </label>
+          <label class="audio-query-only" hidden>
+            Audio job:
+            <select id="query-job-id"></select>
+          </label>
+        </div>
+        <div class="row">
+          <input type="text" id="query-question" placeholder="e.g. 'What did Alice say about Isaac Sim at minute 23?'" class="grow">
+          <button type="submit" class="primary">Ask</button>
+        </div>
+        <pre class="log answer" id="query-answer">(no answer yet)</pre>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <span id="footer-version"></span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

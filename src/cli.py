@@ -42,6 +42,15 @@ audio_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(audio_app)
+
+ui_server_app = typer.Typer(
+    name="ui-server",
+    help="Persistent web UI for Spectator: drag-drop upload, live progress, "
+         "VSS lifecycle controls, output download, video / audio Q&A. "
+         "Runs as a detached uvicorn process; localhost-only by default.",
+    no_args_is_help=True,
+)
+app.add_typer(ui_server_app)
 console = Console()
 
 
@@ -518,6 +527,181 @@ def audio_fetch(
     if not r.ok:
         console.print(f"[red]fetch failed[/red]\n{r.stderr}")
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# ui-server: persistent web UI lifecycle (introduced in v0.2.0)
+# ---------------------------------------------------------------------------
+
+
+def _ui_server_pid_alive(pid_file: Path) -> int | None:
+    """Return the PID if the recorded server is still running, else None."""
+    if not pid_file.is_file():
+        return None
+    try:
+        pid = int(pid_file.read_text().strip())
+    except ValueError:
+        return None
+    try:
+        import os as _os
+        _os.kill(pid, 0)
+        return pid
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return pid
+
+
+@ui_server_app.command("start")
+def ui_server_start(
+    target: Optional[str] = typer.Option(None, "--target", "-t",
+        help="SSH host alias to drive jobs against (default: local). "
+             "All jobs submitted via the Web UI will use this target."),
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",
+        help="Spectator $workdir on this machine. Web UI state lives at "
+             "<workdir>/ui-server/."),
+    port: int = typer.Option(7777, "--port", "-p",
+        help="TCP port to bind."),
+    bind: str = typer.Option("127.0.0.1", "--bind",
+        help="Bind address. Default 127.0.0.1 (localhost-only). Set to "
+             "0.0.0.0 to expose on the LAN — the Web UI has no auth, so "
+             "only do this on a network you trust."),
+):
+    """Start the persistent Web UI server in the background."""
+    from .webui import server as ui_server
+
+    paths = ui_server.server_state_paths(workdir)
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    pid_file: Path = paths["pid_file"]
+    log_file: Path = paths["log_file"]
+
+    existing = _ui_server_pid_alive(pid_file)
+    if existing is not None:
+        console.print(f"[yellow]Web UI already running[/yellow] (pid {existing}).")
+        console.print(f"  url: http://{bind}:{port}/")
+        console.print(f"  log: {log_file}")
+        return
+
+    # Detached uvicorn. We deliberately don't import uvicorn in the parent
+    # — the child resolves it from the venv on its own. PYTHONPATH is set
+    # so the `src.webui.server:create_app` factory resolves correctly when
+    # the venv was bootstrapped via the wrapper.
+    import os
+    import subprocess
+    import sys
+
+    project_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    existing_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{project_root}:{existing_pp}" if existing_pp else str(project_root)
+    )
+    env["SPECTATOR_UI_WORKDIR"] = workdir
+    env["SPECTATOR_UI_TARGET"] = target or ""
+
+    cmd = [
+        sys.executable, "-m", "uvicorn",
+        "src.webui._launch:app",
+        "--host", bind,
+        "--port", str(port),
+        "--no-access-log",
+    ]
+    log_fh = open(log_file, "ab", buffering=0)
+    proc = subprocess.Popen(
+        cmd, stdout=log_fh, stderr=subprocess.STDOUT,
+        cwd=str(project_root), env=env,
+        start_new_session=True,
+    )
+    log_fh.close()
+    pid_file.write_text(str(proc.pid))
+
+    console.print(f"[green]Web UI started[/green] (pid {proc.pid}).")
+    console.print(f"  url: http://{bind}:{port}/")
+    console.print(f"  log: {log_file}")
+    console.print(f"  target: {target or 'local'}")
+    console.print(f"  workdir: {workdir}")
+    if bind != "127.0.0.1":
+        console.print(
+            "[yellow]Note:[/yellow] bound on a non-localhost address; "
+            "the Web UI has no built-in auth."
+        )
+
+
+@ui_server_app.command("stop")
+def ui_server_stop(
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
+):
+    """Stop the running Web UI server."""
+    from .webui import server as ui_server
+
+    paths = ui_server.server_state_paths(workdir)
+    pid_file: Path = paths["pid_file"]
+    pid = _ui_server_pid_alive(pid_file)
+    if pid is None:
+        if pid_file.is_file():
+            pid_file.unlink()
+        console.print("[yellow]Web UI is not running.[/yellow]")
+        return
+
+    import os
+    import signal
+
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError) as exc:
+        console.print(f"[red]could not signal pid {pid}[/red]: {exc}")
+        raise typer.Exit(1) from exc
+
+    pid_file.unlink(missing_ok=True)
+    console.print(f"[green]Web UI stopped[/green] (was pid {pid}).")
+
+
+@ui_server_app.command("status")
+def ui_server_status(
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
+):
+    """Print whether the Web UI is running and where its state lives."""
+    from .webui import server as ui_server
+
+    paths = ui_server.server_state_paths(workdir)
+    pid = _ui_server_pid_alive(paths["pid_file"])
+    if pid:
+        console.print(f"[green]Web UI is running[/green] (pid {pid}).")
+    else:
+        console.print("[yellow]Web UI is not running.[/yellow]")
+    console.print(f"  state root: {paths['root']}")
+    console.print(f"  jobs dir:   {paths['jobs_dir']}")
+    console.print(f"  uploads:    {paths['uploads_dir']}")
+    console.print(f"  log file:   {paths['log_file']}")
+    console.print(f"  pid file:   {paths['pid_file']}")
+
+
+@ui_server_app.command("logs")
+def ui_server_logs(
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
+    follow: bool = typer.Option(False, "--follow", "-f",
+        help="Stream new log lines as they arrive (Ctrl-C to exit)."),
+    lines: int = typer.Option(200, "--lines", "-n"),
+):
+    """Tail the Web UI server's log."""
+    from .webui import server as ui_server
+
+    paths = ui_server.server_state_paths(workdir)
+    log_file: Path = paths["log_file"]
+    if not log_file.is_file():
+        console.print(f"[yellow]No log file yet at {log_file}[/yellow]")
+        return
+
+    import subprocess
+
+    args = ["tail", f"-n{lines}"]
+    if follow:
+        args.append("-f")
+    args.append(str(log_file))
+    try:
+        subprocess.run(args, check=False)
+    except KeyboardInterrupt:
+        return
 
 
 def main() -> None:

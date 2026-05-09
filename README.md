@@ -238,13 +238,33 @@ Once a video is processed (and indexed), you can ask questions about it from any
 ./spectator query "What did Alice say about Isaac Sim?" --target <gpu-machine>
 ```
 
-### Open the web UI
+### Open the VSS agent's web UI
 
 ```bash
 ./spectator ui --target <gpu-machine>
 ```
 
-The command prints an `ssh -L` recipe — paste it into another terminal, then open http://localhost:3030 in your browser. The UI gives you drag-and-drop upload, the same Q&A, and a timeline view.
+The command prints an `ssh -L` recipe — paste it into another terminal, then open http://localhost:3030 in your browser. The VSS agent UI gives you drag-and-drop upload, video Q&A, and a timeline view.
+
+### Use the Spectator Web UI (v0.2.0+)
+
+Spectator also ships its own persistent web UI that wraps the CLI: drag-drop upload, live progress with rt-factor + ETA, VSS lifecycle controls, output download, and a query box for both video (VSS) and audio (transcript) Q&A. Localhost-only by default.
+
+```bash
+# start the server (runs detached; survives shell exit)
+./spectator ui-server start [--port 7777] [--target <gpu-machine>]
+
+# open in your browser
+open http://localhost:7777/
+
+# tail the server log
+./spectator ui-server logs --follow
+
+# stop when done
+./spectator ui-server stop
+```
+
+Pick `--target <gpu-machine>` if you want jobs submitted via the UI to run on a remote host. Without it, all jobs run locally on this machine. See [REFERENCE.md → Web UI](REFERENCE.md#web-ui) for the full HTTP / WebSocket API surface.
 
 ### Tear down when you're done
 
