@@ -186,6 +186,33 @@ Quality presets:
 
 For non-English recordings, bilingual / code-switched audio, or "translate to English" mode, see [REFERENCE.md → Audio language handling](REFERENCE.md#audio-language-handling).
 
+### Transcribe locally on a Mac (no GPU host needed)
+
+Apple Silicon Macs can transcribe audio entirely locally — no SSH, no remote host. Spectator auto-detects the torch device and uses Apple's Metal Performance Shaders (MPS) for ~2-4× faster-than-real-time transcription on M-series chips:
+
+```bash
+# one-time: install Whisper + torch into a local audio-venv (~5 min)
+./spectator audio install
+
+# transcribe with auto-detected device (cuda > mps > cpu)
+./spectator audio transcribe meeting.mp3 --quality meeting
+
+# force a specific device if needed
+./spectator audio transcribe meeting.mp3 --device cpu     # CPU-only run
+./spectator audio transcribe meeting.mp3 --device mps     # force MPS even if CUDA is detected
+```
+
+Output lands at `~/spectator/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`).
+
+Rough performance on a 1-hour `meeting`-quality recording:
+
+| Hardware | Real-time factor |
+|---|---|
+| Apple Silicon (M-series) via MPS | 2-4× faster than real-time |
+| Apple Silicon via CPU | real-time to 2× slower |
+| Intel Mac via CPU | 5-15× slower than real-time |
+| NVIDIA GPU via CUDA | 10-30× faster than real-time |
+
 ### Summarize a video
 
 The video has to live on the GPU host (where VSS can read it). The simplest workflow: SSH in, drop the file under `~/spectator/`, run `process`:

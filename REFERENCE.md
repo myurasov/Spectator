@@ -19,6 +19,7 @@ Detailed reference for Spectator. For the friendly setup walk-through (designed 
 - [Subcommand reference](#subcommand-reference)
 - [Required env vars / keys](#required-env-vars--keys)
 - [Hardware profiles](#hardware-profiles)
+- [Audio device selection](#audio-device-selection)
 - [Audio language handling](#audio-language-handling)
 - [Notes & caveats](#notes--caveats)
 - [Layout](#layout)
@@ -282,6 +283,37 @@ Spectator never reads outside its own folder; it only sees the env vars.
 - `IGX-THOR`, `AGX-THOR` — Jetson edge
 
 Pick by passing `--hardware <profile>` (and adjust `--llm` accordingly — server-class GPUs can run the LLM locally).
+
+## Audio device selection
+
+Spectator auto-detects the best torch device available in the audio-venv before each `audio transcribe` run, in this order: **`cuda`** (NVIDIA GPU) → **`mps`** (Apple Silicon) → **`cpu`** (fallback). The detection is a one-shot probe via the audio-venv's Python — no caching, so a hot-swap of the audio-venv between runs is picked up correctly.
+
+Override with `--device {cuda|mps|cpu}`:
+
+```bash
+# default — auto-detect
+./spectator audio transcribe call.mp3
+
+# force CPU even if a GPU is available (useful for debugging or low-priority background runs)
+./spectator audio transcribe call.mp3 --device cpu
+
+# force MPS on a Mac if you want to bypass auto-detection
+./spectator audio transcribe call.mp3 --device mps
+
+# force CUDA on a remote host (errors loudly if cuda isn't available, instead of falling back silently)
+./spectator audio transcribe call.mp3 --target <gpu-machine> --device cuda
+```
+
+`--fp16` is wired to the device automatically: `True` on CUDA only; `False` on MPS and CPU. MPS has long-standing fp16 quality regressions in `openai-whisper` (boundary segments come out garbled); CPU doesn't support fp16 at all. Don't try to force `--fp16` outside the CUDA path.
+
+Performance expectations (orientation only, model = `large-v3-turbo`):
+
+| Hardware | Real-time factor |
+|---|---|
+| NVIDIA GPU via CUDA (Spark / H100 / L40S) | 10-30× faster than real-time |
+| Apple Silicon via MPS | 2-4× faster than real-time |
+| Apple Silicon via CPU | real-time to 2× slower |
+| Intel Mac via CPU | 5-15× slower than real-time |
 
 ## Audio language handling
 

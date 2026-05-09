@@ -462,11 +462,20 @@ def audio_transcribe(
              "job. Default: True when running with --target (and --detach), False otherwise."),
     skip_upload: bool = typer.Option(False, "--skip-upload",
         help="Assume the audio file is already at $workdir/audio-in/<basename> on the target."),
+    device: Optional[str] = typer.Option(None, "--device",
+        help="Force a specific torch device: `cuda` (NVIDIA GPU), `mps` (Apple Silicon), or `cpu`. "
+             "Default: auto-detect via the audio-venv's torch (cuda > mps > cpu). Use `--device cpu` "
+             "to test the CPU path on a host that has a GPU, or `--device cuda` to force-fail early "
+             "if cuda is not actually available."),
 ):
     """Transcribe an audio file (uploads to target, runs whisper in tmux)."""
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     if task not in ("transcribe", "translate"):
         console.print(f"[red]--task must be 'transcribe' or 'translate' (got {task!r})[/red]")
+        raise typer.Exit(2)
+    if device is not None and device not in audio_mod.VALID_DEVICES:
+        console.print(f"[red]--device must be one of {audio_mod.VALID_DEVICES} "
+                      f"(got {device!r})[/red]")
         raise typer.Exit(2)
     r = audio_mod.transcribe(
         audio, host=target, cfg=cfg,
@@ -474,6 +483,7 @@ def audio_transcribe(
         clip=clip, initial_prompt=initial_prompt,
         session_name=session, detach=detach, follow=follow,
         skip_upload=skip_upload,
+        device_override=device,
     )
     # audio_mod.transcribe prints stdout itself (early, before tail -f).
     if not r.ok:

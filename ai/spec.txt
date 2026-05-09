@@ -2,7 +2,7 @@
 Spectator — specification (canonical reference for AI dev agents)
 ================================================================================
 
-Version: 0.1.0
+Version: 0.1.1
 Status:  alpha
 License: Apache 2.0
 Source:  https://github.com/myurasov/Spectator
@@ -353,6 +353,29 @@ Override knobs:
   * --session NAME      — tmux session name (default derived from
                           audio filename stem with non-alnum chars
                           mapped to "-", capped at 40 chars).
+  * --device DEVICE     — force the torch device. Default behavior:
+                          auto-detect via the audio-venv's torch in
+                          this order — cuda (NVIDIA GPU) > mps (Apple
+                          Silicon) > cpu. Pass --device cuda/mps/cpu
+                          to override. The detection is a one-shot
+                          probe per transcribe call (no caching).
+
+Device-dependent flags inside the whisper command (audio.py
+`_whisper_command`):
+  * --device cuda  → --fp16 True
+  * --device mps   → --fp16 False  (openai-whisper has long-standing
+                                    fp16 quality regressions on MPS:
+                                    boundary segments come out
+                                    garbled)
+  * --device cpu   → --fp16 False  (CPU doesn't support fp16 in
+                                    whisper at all)
+
+Performance expectations (orientation only, model = large-v3-turbo):
+  * Apple Silicon via MPS    : ~2-4× faster than real-time
+  * Apple Silicon via CPU    : ~real-time to 2× slower
+  * Intel Mac via CPU        : 5-15× slower than real-time
+  * NVIDIA GPU via CUDA      : 10-30× faster than real-time
+                              (varies with Spark/H100/L40S)
 
 Output layout (under $workdir/audio-out/<stem>/):
   * <stem>.txt          — plain text
@@ -573,10 +596,12 @@ the user's manual integration runs.
   When `up` fails with "agent_ui not reachable on 3030", check
   whether the patches still match upstream.
 
-* AGENT_UI_PORT vs UI_PORT: `config.py` defines `UI_PORT = 3030`,
-  not `AGENT_UI_PORT`. If you see references to `config.AGENT_UI_PORT`
-  in the install bash payload, that's a pre-existing typo to fix —
-  the value should be `config.UI_PORT`.
+* `audio install` on a host without nvidia-smi installs *default*
+  PyPI torch wheels (CPU on Intel Mac, CPU+MPS-capable on Apple
+  Silicon since torch 2.x). The detection is hard-coded: presence of
+  `nvidia-smi` -> cu128 wheels, otherwise -> default. There's no
+  override flag; if you need a specific torch build, edit
+  `audio.py:install_audio_venv()`'s bash payload.
 
 
 --------------------------------------------------------------------------------

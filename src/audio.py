@@ -242,6 +242,50 @@ PY_EOF
 
 
 # ---------------------------------------------------------------------------
+# device auto-detection (cuda > mps > cpu)
+# ---------------------------------------------------------------------------
+
+VALID_DEVICES = ("cuda", "mps", "cpu")
+
+
+def _detect_device(cfg: config.StackConfig, host: str | None) -> str:
+    """Probe the audio-venv's torch for the best available device.
+
+    Order of preference: cuda (NVIDIA GPU) > mps (Apple Silicon) > cpu.
+    If the probe fails (audio-venv missing, torch import broken, ...)
+    we return "cpu" so the actual whisper call surfaces a clearer
+    error than the probe would.
+
+    Called from `transcribe()` after `install_audio_venv()` has run.
+    """
+    venv_py = _bash_dq(f"{_venv_dir(cfg)}/bin/python")
+    script = textwrap.dedent(f'''
+        if [ ! -x {venv_py} ]; then
+            echo cpu
+            exit 0
+        fi
+        {venv_py} - <<'PY_EOF'
+import torch
+
+if torch.cuda.is_available():
+    print("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    print("mps")
+else:
+    print("cpu")
+PY_EOF
+    ''').strip()
+    if host:
+        r = ssh_run(host, script)
+    else:
+        r = run(["bash", "-c", script])
+    if not r.ok or not r.stdout.strip():
+        return "cpu"
+    detected = r.stdout.strip().splitlines()[-1].strip()
+    return detected if detected in VALID_DEVICES else "cpu"
+
+
+# ---------------------------------------------------------------------------
 # build the whisper command for a transcribe run
 # ---------------------------------------------------------------------------
 
@@ -271,7 +315,10 @@ def _whisper_command(audio_basename: str, cfg: config.StackConfig,
         flags.append(f"--language {language}")
     flags.append(f"--task {task}")
     flags.append(f"--device {device}")
-    flags.append("--fp16 True")
+    # fp16 only on CUDA. MPS has long-standing fp16 quality issues with
+    # openai-whisper (garbage segments at boundaries); CPU doesn't support
+    # fp16 at all in whisper. fp32 is the safe default for non-CUDA paths.
+    flags.append("--fp16 True" if device == "cuda" else "--fp16 False")
     for k, v in preset.flags.items():
         if isinstance(v, bool):
             flags.append(f"--{k} {v}")
@@ -309,6 +356,7 @@ def transcribe(
     detach: bool | None = None,
     follow: bool | None = None,
     skip_upload: bool = False,
+    device_override: str | None = None,
 ) -> RunResult:
     """Upload audio (if not skip_upload) and run whisper.
 
@@ -317,6 +365,12 @@ def transcribe(
     progress in the console). Ctrl-C exits the tail; the underlying tmux
     job keeps running. With `follow=False` the call returns immediately
     after starting the tmux session — laptop-close-safe.
+
+    `device_override=None` (the default) auto-detects the best torch
+    device available in the audio-venv (cuda > mps > cpu). Pass an
+    explicit string to force a specific device — useful when a host has
+    a GPU but you want to test the CPU path, or when MPS is detected
+    but a model is known not to work well on it.
     """
     if quality not in QUALITY_PRESETS:
         raise ValueError(f"unknown quality preset: {quality!r}; "
@@ -378,8 +432,16 @@ def transcribe(
         if dest.resolve() != audio_local.resolve():
             shutil.copy2(audio_local, dest)
 
-    # 3. build the whisper command
-    device = "cuda"  # whisper falls back to CPU if cuda is missing
+    # 3. detect device + build the whisper command
+    if device_override is not None:
+        if device_override not in VALID_DEVICES:
+            raise ValueError(f"unknown device {device_override!r}; "
+                             f"choose from {VALID_DEVICES}")
+        device = device_override
+    else:
+        device = _detect_device(cfg, host)
+    console.print(f"  device: [cyan]{device}[/cyan]"
+                  + (" (auto-detected)" if device_override is None else " (forced via --device)"))
     cmd = _whisper_command(
         audio_basename=basename,
         cfg=cfg,

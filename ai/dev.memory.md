@@ -15,6 +15,7 @@ overrides it in the current conversation.
 - [Lint](#lint)
 - [Commits](#commits)
 - [Dependencies](#dependencies)
+- [Audio device handling](#audio-device-handling)
 - [Upstream contracts (don't break)](#upstream-contracts-dont-break)
 - [Publication](#publication)
 - [Ask-before-acting list](#ask-before-acting-list)
@@ -171,6 +172,18 @@ specific event. Don't reorder existing entries unless asked.
 - When deps change in `pyproject.toml`, update
   [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) in the same
   PR. (May 2026)
+
+## Audio device handling
+
+- `transcribe()` auto-detects the torch device by probing the
+  audio-venv (cuda > mps > cpu). The CLI exposes `--device` to force
+  a specific device. (May 2026, v0.1.1)
+- `--fp16 True` is only emitted on CUDA. MPS has long-standing fp16
+  quality regressions in openai-whisper (boundary segments come out
+  garbled); CPU doesn't support fp16 in whisper at all. (May 2026, v0.1.1)
+- Apple Silicon performance: ~2-4× faster than real-time via MPS,
+  ~real-time to 2× slower via CPU. CUDA on Spark/H100/L40S is
+  10-30× faster than real-time. (May 2026, v0.1.1)
 
 ## Upstream contracts (don't break)
 

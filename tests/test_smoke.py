@@ -67,3 +67,77 @@ def test_version_attribute_present() -> None:
 
     assert isinstance(src.__version__, str)
     assert src.__version__.count(".") >= 1
+
+
+def test_whisper_command_emits_fp16_only_on_cuda() -> None:
+    """`--fp16 True` is only safe on CUDA; MPS has known fp16 quality
+    regressions in openai-whisper, and CPU doesn't support fp16 at all."""
+    from src.audio import QUALITY_PRESETS, _whisper_command
+    from src.config import StackConfig
+
+    cfg = StackConfig.from_env(workdir="/tmp/spectator-test")
+    preset = QUALITY_PRESETS["meeting"]
+
+    common = dict(
+        audio_basename="audio.mp3",
+        cfg=cfg,
+        preset=preset,
+        model_override=None,
+        language=None,
+        task="transcribe",
+        clip=None,
+        initial_prompt=None,
+        output_subdir="audio",
+    )
+
+    cmd_cuda = _whisper_command(device="cuda", **common)
+    assert "--device cuda" in cmd_cuda
+    assert "--fp16 True" in cmd_cuda
+
+    cmd_mps = _whisper_command(device="mps", **common)
+    assert "--device mps" in cmd_mps
+    assert "--fp16 True" not in cmd_mps
+    assert "--fp16 False" in cmd_mps
+
+    cmd_cpu = _whisper_command(device="cpu", **common)
+    assert "--device cpu" in cmd_cpu
+    assert "--fp16 True" not in cmd_cpu
+    assert "--fp16 False" in cmd_cpu
+
+
+def test_detect_device_falls_back_to_cpu_when_probe_fails(monkeypatch) -> None:
+    """If the audio-venv probe returns non-zero or empty stdout,
+    `_detect_device` returns 'cpu' so the actual whisper call surfaces
+    a clearer error than the probe."""
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    cfg = StackConfig.from_env(workdir="/tmp/no-such-spectator-workdir")
+
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=1, stdout="", stderr="venv missing"))
+    assert audio_mod._detect_device(cfg, host=None) == "cpu"
+
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="cpu\n", stderr=""))
+    assert audio_mod._detect_device(cfg, host=None) == "cpu"
+
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="mps\n", stderr=""))
+    assert audio_mod._detect_device(cfg, host=None) == "mps"
+
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="cuda\n", stderr=""))
+    assert audio_mod._detect_device(cfg, host=None) == "cuda"
+
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="something-weird\n", stderr=""))
+    assert audio_mod._detect_device(cfg, host=None) == "cpu"
+
+
+def test_audio_transcribe_help_advertises_device_flag() -> None:
+    """The CLI's `audio transcribe --help` should document --device."""
+    from src.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["audio", "transcribe", "--help"])
+    assert result.exit_code == 0
+    assert "--device" in result.stdout
+    for kw in ("cuda", "mps", "cpu"):
+        assert kw in result.stdout
