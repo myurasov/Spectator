@@ -12,4 +12,4 @@ thing on the Spark, and `spectator process video.mp4` ships a video
 through the running stack to get a Q&A-ready summary.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"

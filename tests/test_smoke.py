@@ -143,6 +143,10 @@ def test_detect_device_falls_back_to_cpu_when_probe_fails(monkeypatch) -> None:
     from src.config import StackConfig
 
     cfg = StackConfig.from_env(workdir="/tmp/no-such-spectator-workdir")
+    # Make sure the v0.4.1 MPS-skip default (which we test below) doesn't
+    # interfere with these unrelated paths — explicitly clear the
+    # opt-in env var first.
+    monkeypatch.delenv("SPECTATOR_ALLOW_MPS_AUTO", raising=False)
 
     monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=1, stdout="", stderr="venv missing"))
     assert audio_mod._detect_device(cfg, host=None) == "cpu"
@@ -150,14 +154,66 @@ def test_detect_device_falls_back_to_cpu_when_probe_fails(monkeypatch) -> None:
     monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="cpu\n", stderr=""))
     assert audio_mod._detect_device(cfg, host=None) == "cpu"
 
-    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="mps\n", stderr=""))
-    assert audio_mod._detect_device(cfg, host=None) == "mps"
-
     monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="cuda\n", stderr=""))
     assert audio_mod._detect_device(cfg, host=None) == "cuda"
 
     monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="something-weird\n", stderr=""))
     assert audio_mod._detect_device(cfg, host=None) == "cpu"
+
+
+def test_detect_device_skips_mps_by_default(monkeypatch, capsys) -> None:
+    """v0.4.1: auto-detected MPS is downgraded to CPU because openai-whisper
+    crashes on Apple Silicon GPU with the large-v3 model family used by
+    every Spectator quality preset. See bug 2 in the 2026-05-09 report
+    + upstream openai/whisper#2151.
+
+    Probe returns 'mps' but `_detect_device` returns 'cpu' and prints
+    a one-line warning explaining the override. Operator can opt back
+    in with SPECTATOR_ALLOW_MPS_AUTO=1.
+    """
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    cfg = StackConfig.from_env(workdir="/tmp/no-such-spectator-workdir")
+    monkeypatch.delenv("SPECTATOR_ALLOW_MPS_AUTO", raising=False)
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="mps\n", stderr=""))
+
+    # Default: probe says mps, _detect_device returns cpu.
+    detected = audio_mod._detect_device(cfg, host=None)
+    assert detected == "cpu", (
+        "auto-detected mps must downgrade to cpu by default — see "
+        "openai/whisper#2151 for the upstream crash this avoids."
+    )
+
+    # The downgrade should be visible to the operator (rich Console
+    # writes to stdout by default, which capsys catches).
+    captured = capsys.readouterr()
+    out_plus_err = captured.out + captured.err
+    assert "MPS detected but auto-skipped" in out_plus_err, (
+        f"warning missing from stdout/stderr; got:\n{out_plus_err}"
+    )
+    assert "openai/whisper" in out_plus_err  # the issue link/citation
+    assert "SPECTATOR_ALLOW_MPS_AUTO" in out_plus_err  # the override hint
+
+
+def test_detect_device_respects_mps_opt_in_env_var(monkeypatch, capsys) -> None:
+    """Setting SPECTATOR_ALLOW_MPS_AUTO=1 re-enables auto-detect MPS.
+    For users who've patched whisper or are testing a smaller model
+    known not to hit the upstream bug."""
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    cfg = StackConfig.from_env(workdir="/tmp/no-such-spectator-workdir")
+    monkeypatch.setenv("SPECTATOR_ALLOW_MPS_AUTO", "1")
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="mps\n", stderr=""))
+
+    assert audio_mod._detect_device(cfg, host=None) == "mps"
+
+    captured = capsys.readouterr()
+    out_plus_err = captured.out + captured.err
+    assert "auto-skipped" not in out_plus_err  # no warning when opted in
 
 
 def test_audio_transcribe_help_advertises_device_flag() -> None:

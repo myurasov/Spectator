@@ -428,6 +428,7 @@ All commands accept `--target HOST` (an SSH alias). Without `--target`, the comm
 | `NGC_CLI_API_KEY` | always (pulls images from nvcr.io) | https://org.ngc.nvidia.com/setup/api-keys |
 | `NVIDIA_API_KEY` | when using remote LLM endpoints (default) | https://build.nvidia.com (Get API Key) |
 | `LLM_ENDPOINT_URL` | overrides the default `https://integrate.api.nvidia.com/v1` | only if self-hosting LLM |
+| `SPECTATOR_ALLOW_MPS_AUTO` | optional — set to `1` to re-enable MPS in the auto-detect path on Apple Silicon | see [Audio device selection](#audio-device-selection) |
 
 Spectator never reads outside its own folder; it only sees the env vars.
 
@@ -442,7 +443,7 @@ Pick by passing `--hardware <profile>` (and adjust `--llm` accordingly — serve
 
 ## Audio device selection
 
-Spectator auto-detects the best torch device available in the audio-venv before each `audio transcribe` run, in this order: **`cuda`** (NVIDIA GPU) → **`mps`** (Apple Silicon) → **`cpu`** (fallback). The detection is a one-shot probe via the audio-venv's Python — no caching, so a hot-swap of the audio-venv between runs is picked up correctly.
+Spectator auto-detects the best torch device available in the audio-venv before each `audio transcribe` run. The default order is **`cuda`** (NVIDIA GPU) → **`cpu`** (fallback). **MPS (Apple Silicon GPU) is deliberately skipped from the auto-detect path** as of v0.4.1 — see the [MPS limitation](#mps-limitation-apple-silicon) note below for why. Detection is a one-shot probe via the audio-venv's Python — no caching, so a hot-swap of the audio-venv between runs is picked up correctly.
 
 Override with `--device {cuda|mps|cpu}`:
 
@@ -467,9 +468,29 @@ Performance expectations (orientation only, model = `large-v3-turbo`):
 | Hardware | Real-time factor |
 |---|---|
 | NVIDIA GPU via CUDA (Spark / H100 / L40S) | 10-30× faster than real-time |
-| Apple Silicon via MPS | 2-4× faster than real-time |
+| Apple Silicon via MPS | 2-4× faster than real-time *(when working — see below)* |
 | Apple Silicon via CPU | real-time to 2× slower |
 | Intel Mac via CPU | 5-15× slower than real-time |
+
+### MPS limitation (Apple Silicon)
+
+`openai-whisper` × `torch ≥ 2.x` currently crashes on Apple Silicon GPU for the entire `large-v3` model family. Symptom on `--device mps`:
+
+```
+TypeError: Cannot convert a MPS Tensor to float64 dtype as the MPS framework
+doesn't support float64. Please use float32 instead.
+```
+
+All four of Spectator's quality presets (`studio` / `meeting` / `phone` / `extreme`) use `large-v3` or `large-v3-turbo`, so this affects every transcribe invocation that lands on MPS via auto-detect. Tracked upstream: [openai/whisper#2151](https://github.com/openai/whisper/issues/2151).
+
+**v0.4.1 mitigation**: auto-detect skips MPS by default and prefers CPU on Apple Silicon, with a one-line warning explaining the downgrade. Real-world impact: `~real-time to 2× slower` instead of `2-4× faster than real-time` for a `meeting`-quality 30-min recording on an M-series Mac. Still tractable for occasional use; definitely send heavy jobs to a CUDA target via `--target <gpu-machine>`.
+
+To bypass the auto-skip:
+
+- **Per-invocation**: `--device mps` is always honored (the user is asking for it explicitly; if you have a smaller model that's known to work, fine).
+- **Globally**: set `SPECTATOR_ALLOW_MPS_AUTO=1` in your shell. Then auto-detect goes back to `cuda > mps > cpu`. Useful if you've patched whisper locally or upstream has landed a fix and you're testing.
+
+When upstream lands a fix, Spectator will revisit the default — likely flipping back to including MPS in the auto-detect order.
 
 ## Audio language handling
 

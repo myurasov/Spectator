@@ -232,6 +232,18 @@ import torch, whisper
 print("torch:", torch.__version__, "  cuda available:", torch.cuda.is_available())
 print("whisper:", whisper.__version__)
 print("models available (large-v3, large-v3-turbo, etc.):", "ok")
+mps_ok = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+if mps_ok and not torch.cuda.is_available():
+    # Apple Silicon path. openai-whisper × torch >= 2.x crashes on MPS for
+    # the large-v3 family with "Cannot convert MPS Tensor to float64", so
+    # Spectator's auto-detect deliberately skips MPS in favor of CPU. Tell
+    # the operator up front so they don't expect MPS perf without opting in.
+    print()
+    print("Heads-up: MPS detected. Auto-detect will skip it (openai-whisper")
+    print("crashes on Apple Silicon GPU with the large-v3 family used by")
+    print("every Spectator preset). Override with --device mps per call,")
+    print("or set SPECTATOR_ALLOW_MPS_AUTO=1 to re-enable in auto-detect.")
+    print("Tracking: https://github.com/openai/whisper/issues/2151")
 PY_EOF
         echo
         echo "==== audio-venv ready: $VENV ===="
@@ -242,7 +254,8 @@ PY_EOF
 
 
 # ---------------------------------------------------------------------------
-# device auto-detection (cuda > mps > cpu)
+# device auto-detection (cuda > mps > cpu, with an MPS-skip default —
+# see _detect_device docstring for why)
 # ---------------------------------------------------------------------------
 
 VALID_DEVICES = ("cuda", "mps", "cpu")
@@ -251,7 +264,30 @@ VALID_DEVICES = ("cuda", "mps", "cpu")
 def _detect_device(cfg: config.StackConfig, host: str | None) -> str:
     """Probe the audio-venv's torch for the best available device.
 
-    Order of preference: cuda (NVIDIA GPU) > mps (Apple Silicon) > cpu.
+    Preference order is **cuda > cpu** by default — note that **mps is
+    deliberately skipped** unless the operator explicitly opts in via
+    ``SPECTATOR_ALLOW_MPS_AUTO=1``. The reason is upstream: the
+    ``openai-whisper`` × ``torch >= 2.x`` combination has a known
+    crash on Apple Silicon GPUs for the entire ``large-v3`` model
+    family — and all four of Spectator's quality presets (``studio``,
+    ``meeting``, ``phone``, ``extreme``) use ``large-v3`` or
+    ``large-v3-turbo``. Auto-selecting MPS would make a fresh Apple
+    Silicon Mac transcribe run crash with::
+
+        TypeError: Cannot convert a MPS Tensor to float64 dtype as the
+        MPS framework doesn't support float64. Please use float32 instead.
+
+    See https://github.com/openai/whisper/issues/2151 for upstream
+    status. CPU on Apple Silicon (~real-time to 2× slower than
+    real-time on M-series for ``meeting`` preset) is the most reliable
+    auto-detected fallback until upstream lands a fix.
+
+    Explicit ``--device mps`` (forced via the CLI flag) still works —
+    if the user knows what they're asking for (e.g. testing with a
+    smaller model that's known to work, or post-fix upstream),
+    Spectator will honor it. The CPU-skip is only on the auto-detect
+    path.
+
     If the probe fails (audio-venv missing, torch import broken, ...)
     we return "cpu" so the actual whisper call surfaces a clearer
     error than the probe would.
@@ -282,7 +318,26 @@ PY_EOF
     if not r.ok or not r.stdout.strip():
         return "cpu"
     detected = r.stdout.strip().splitlines()[-1].strip()
-    return detected if detected in VALID_DEVICES else "cpu"
+    if detected not in VALID_DEVICES:
+        return "cpu"
+    if detected == "mps" and not os.environ.get("SPECTATOR_ALLOW_MPS_AUTO"):
+        # Downgrade auto-detected MPS to CPU because openai-whisper
+        # crashes on MPS with the large-v3 family (which all four
+        # Spectator presets use). Override with SPECTATOR_ALLOW_MPS_AUTO=1
+        # if you've patched whisper locally or are testing a smaller
+        # model that's known to work.
+        console.print(
+            "[yellow]MPS detected but auto-skipped[/yellow]: openai-whisper "
+            "currently crashes on Apple Silicon GPU with the large-v3 family "
+            "(\"Cannot convert MPS Tensor to float64\"). Falling back to "
+            "[cyan]cpu[/cyan]. Override with [italic]"
+            "SPECTATOR_ALLOW_MPS_AUTO=1[/italic] or [italic]--device mps[/italic] "
+            "(both honored). Tracking: "
+            "[link=https://github.com/openai/whisper/issues/2151]"
+            "openai/whisper#2151[/link]."
+        )
+        return "cpu"
+    return detected
 
 
 # ---------------------------------------------------------------------------

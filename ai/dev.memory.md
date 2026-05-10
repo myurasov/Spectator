@@ -178,14 +178,29 @@ specific event. Don't reorder existing entries unless asked.
 ## Audio device handling
 
 - `transcribe()` auto-detects the torch device by probing the
-  audio-venv (cuda > mps > cpu). The CLI exposes `--device` to force
-  a specific device. (May 2026, v0.1.1)
+  audio-venv. As of v0.4.1, the default order is **cuda > cpu**
+  (mps deliberately skipped — see below). The CLI's `--device` flag
+  still respects all three values (cuda / mps / cpu) explicitly.
+  (May 2026, v0.1.1; revisited v0.4.1)
 - `--fp16 True` is only emitted on CUDA. MPS has long-standing fp16
   quality regressions in openai-whisper (boundary segments come out
   garbled); CPU doesn't support fp16 in whisper at all. (May 2026, v0.1.1)
-- Apple Silicon performance: ~2-4× faster than real-time via MPS,
-  ~real-time to 2× slower via CPU. CUDA on Spark/H100/L40S is
-  10-30× faster than real-time. (May 2026, v0.1.1)
+- Apple Silicon performance: ~2-4× faster than real-time via MPS
+  *(when working — see MPS-skip note below)*, ~real-time to 2× slower
+  via CPU. CUDA on Spark/H100/L40S is 10-30× faster than real-time.
+  (May 2026, v0.1.1)
+- **MPS skipped from auto-detect (v0.4.1+)**: openai-whisper × torch
+  >= 2.x crashes on Apple Silicon GPU for the entire large-v3 family
+  (which all four Spectator presets use) — TypeError "Cannot convert
+  a MPS Tensor to float64". Tracked upstream as
+  https://github.com/openai/whisper/issues/2151. Until the upstream
+  lands a fix, `_detect_device` downgrades probe-detected `mps` to
+  `cpu` with a one-line warning. Operators can opt back in via the
+  `SPECTATOR_ALLOW_MPS_AUTO=1` env var (e.g. they've patched whisper
+  locally, or are testing a smaller model that's known to work).
+  Per-call `--device mps` is always honored — that's the explicit
+  user-asked-for-it path. When upstream fixes the bug, revisit this
+  default and likely flip back to `cuda > mps > cpu`. (May 2026, v0.4.1)
 
 ## Upstream contracts (don't break)
 

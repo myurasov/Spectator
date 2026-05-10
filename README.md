@@ -212,18 +212,18 @@ For non-English recordings, bilingual / code-switched audio, or "translate to En
 
 ### Transcribe locally on a Mac (no GPU host needed)
 
-Apple Silicon Macs can transcribe audio entirely locally — no SSH, no remote host. Spectator auto-detects the torch device and uses Apple's Metal Performance Shaders (MPS) for ~2-4× faster-than-real-time transcription on M-series chips:
+Apple Silicon Macs can transcribe audio entirely locally — no SSH, no remote host. Spectator auto-detects the torch device and uses CPU on Apple Silicon by default (see the MPS note below for why):
 
 ```bash
 # one-time: install Whisper + torch into a local audio-venv (~5 min)
 ./spectator audio install
 
-# transcribe with auto-detected device (cuda > mps > cpu)
+# transcribe with auto-detected device (cuda > cpu; mps skipped — see below)
 ./spectator audio transcribe meeting.mp3 --quality meeting
 
 # force a specific device if needed
-./spectator audio transcribe meeting.mp3 --device cpu     # CPU-only run
-./spectator audio transcribe meeting.mp3 --device mps     # force MPS even if CUDA is detected
+./spectator audio transcribe meeting.mp3 --device cpu     # explicit CPU
+./spectator audio transcribe meeting.mp3 --device mps     # opt-in to MPS (see caveat)
 ```
 
 Output lands at `~/.spectator/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`).
@@ -232,10 +232,12 @@ Rough performance on a 1-hour `meeting`-quality recording:
 
 | Hardware | Real-time factor |
 |---|---|
-| Apple Silicon (M-series) via MPS | 2-4× faster than real-time |
 | Apple Silicon via CPU | real-time to 2× slower |
+| Apple Silicon (M-series) via MPS | 2-4× faster *(when working — see below)* |
 | Intel Mac via CPU | 5-15× slower than real-time |
 | NVIDIA GPU via CUDA | 10-30× faster than real-time |
+
+**Why MPS isn't the auto-detect default**: `openai-whisper` × `torch ≥ 2.x` crashes on Apple Silicon GPU for the `large-v3` family that all of Spectator's quality presets use ("Cannot convert a MPS Tensor to float64"). Tracked upstream as [openai/whisper#2151](https://github.com/openai/whisper/issues/2151). v0.4.1's auto-detect skips MPS and falls back to CPU with a one-line warning. Override per-invocation with `--device mps`, or globally with `SPECTATOR_ALLOW_MPS_AUTO=1`. See [REFERENCE.md → MPS limitation](REFERENCE.md#mps-limitation-apple-silicon) for the full story.
 
 ### Summarize a video
 
