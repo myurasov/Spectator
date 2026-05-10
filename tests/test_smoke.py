@@ -216,6 +216,72 @@ def test_down_script_covers_every_spectator_launched_thing() -> None:
     assert "~/.spectator/bin/sys-cache-cleaner.sh" in script  # workdir interp
 
 
+def test_audio_local_copy_resolves_workdir_correctly(tmp_path, monkeypatch) -> None:
+    """v0.3.6 regression test for the literal-`$HOME`-directory bug.
+
+    The internal helper `_in_dir(cfg)` returns a bash-friendly path
+    form that prefixes a literal `$HOME/...` so it survives quoting in
+    bash heredocs. Pre-v0.3.6, the local-copy block in `audio.transcribe()`
+    fed that string through `os.path.expanduser`, which only expands a
+    leading `~` — `$HOME` stayed as a literal token, and the resulting
+    `Path("$HOME/...")` was treated as a relative path under the
+    subprocess cwd. The audio file ended up at
+    `<cwd>/$HOME/.spectator/audio-in/<basename>` (a real on-disk dir
+    named `$HOME`), and whisper then failed with `Error opening input
+    file ~/.spectator/audio-in/<basename>` because nothing actually
+    landed there.
+
+    Fix: walk `cfg.workdir` through `Path.expanduser()` directly. This
+    test asserts that a local transcribe invocation copies the audio
+    to `<workdir>/audio-in/<basename>` (real path, no `$HOME` token).
+    """
+    import shutil
+
+    from src import audio as audio_mod
+    from src.config import StackConfig
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    workdir = "~/wd"  # exercises the tilde-prefix branch of _expand_tilde
+    cfg = StackConfig(workdir=workdir)
+
+    # Stub out everything except the local-copy block we care about.
+    # _detect_device + the bash setup + the actual whisper run all need
+    # to be no-oped because we don't have an audio-venv in the test env.
+    audio_local = tmp_path / "input.mp3"
+    audio_local.write_bytes(b"fake mp3 bytes for test")
+
+    from src._run import RunResult
+
+    monkeypatch.setattr(audio_mod, "run", lambda *a, **kw: RunResult(rc=0, stdout="", stderr=""))
+    monkeypatch.setattr(audio_mod, "ssh_run", lambda *a, **kw: RunResult(rc=0, stdout="", stderr=""))
+    monkeypatch.setattr(audio_mod, "_detect_device", lambda *a, **kw: "cpu")
+
+    audio_mod.transcribe(
+        audio_local,
+        host=None,
+        cfg=cfg,
+        detach=False,
+        follow=False,
+    )
+
+    # Assert: the file landed at the real expanded workdir, NOT at a
+    # literal `$HOME` directory anywhere under the cwd.
+    expected = fake_home / "wd" / "audio-in" / "input.mp3"
+    assert expected.is_file(), (
+        f"file did not land at {expected}; tree under tmp_path:\n"
+        + "\n".join(str(p) for p in tmp_path.rglob("*"))
+    )
+    assert expected.read_bytes() == b"fake mp3 bytes for test"
+
+    # Belt-and-suspenders: the literal "$HOME" directory must NOT exist
+    # anywhere we can see.
+    bogus = list(tmp_path.rglob("$HOME"))
+    assert not bogus, f"a literal $HOME dir leaked: {bogus}"
+
+
 def test_install_script_handles_existing_non_git_vss_dir() -> None:
     """v0.3.4: the user-install bash script must distinguish three states
     of `$workdir/video-search-and-summarization/`:

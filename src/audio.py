@@ -426,8 +426,15 @@ def transcribe(
     if not host and not skip_upload:
         # local mode: copy the file into audio-in/ so output paths stay consistent.
         # (Skip when --skip-upload — caller has already placed it.)
+        # NB: we go through `Path.expanduser` on cfg.workdir directly here,
+        # NOT through `_in_dir(cfg)`. The latter returns a bash-friendly
+        # form that prefixes a literal `$HOME/...` (so it round-trips
+        # safely through bash heredocs that quote-escape `~`); but
+        # `os.path.expanduser` only handles a leading `~`, leaving any
+        # `$HOME` token intact — which silently created a literal "$HOME"
+        # directory under the subprocess cwd before this fix.
         import shutil
-        dest = Path(os.path.expanduser(_in_dir(cfg))) / basename
+        dest = Path(cfg.workdir).expanduser() / AUDIO_IN_RELPATH / basename
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.resolve() != audio_local.resolve():
             shutil.copy2(audio_local, dest)
