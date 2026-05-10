@@ -216,6 +216,99 @@ def test_down_script_covers_every_spectator_launched_thing() -> None:
     assert "~/.spectator/bin/sys-cache-cleaner.sh" in script  # workdir interp
 
 
+def test_uninstall_script_removes_workdir_and_lists_untouched_things() -> None:
+    """v0.4.0: the uninstall bash payload must rm -rf the configured
+    $workdir AND list (in plain text, for the operator) every category
+    of state Spectator deliberately doesn't auto-clean: docker images,
+    NGC docker login, --apply-system mutations, the uv binary.
+
+    Pin every branch so a future edit can't silently regress to
+    "uninstall removes ~/.docker/config.json out from under unrelated
+    NVIDIA tooling" or "uninstall forgot the workdir".
+    """
+    from src.install import _uninstall_script
+
+    script = _uninstall_script(
+        workdir="~/.spectator",
+        vss_checkout="video-search-and-summarization",
+    )
+
+    assert 'WORKDIR="~/.spectator"' in script
+    assert 'rm -rf "$WORKDIR"' in script
+
+    # Safety guards against rm-rf-ing the wrong thing
+    assert '[ -z "$WORKDIR" ]' in script
+    assert '[ "$WORKDIR" = "/" ]' in script
+    assert '[ "$WORKDIR" = "$HOME" ]' in script
+
+    # Each category of left-behind state is mentioned by name so the
+    # operator gets a checklist of what they may want to clean
+    # manually.
+    assert "docker images" in script.lower()
+    assert "nvcr.io" in script
+    assert "docker logout nvcr.io" in script
+    assert "apply-system" in script
+    assert "uv" in script  # ~/.local/bin/uv mention
+
+
+def test_uninstall_function_calls_stack_down_first(monkeypatch) -> None:
+    """uninstall() must run stack.down() before the rm -rf so VSS
+    containers / spectator-up tmux / audio-* tmux sessions exit
+    cleanly. A naive `rm -rf` against a still-running compose project
+    would leave dangling docker volumes and confuse the next install.
+    """
+    from src import install as install_mod
+    from src import stack as stack_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    call_order: list[str] = []
+
+    def fake_down(cfg, host=None):
+        call_order.append("stack.down")
+        return RunResult(rc=0, stdout="(fake down output)", stderr="")
+
+    def fake_run(args, env=None, **kw):
+        call_order.append("rm -rf bash")
+        return RunResult(rc=0, stdout="", stderr="")
+
+    def fake_ssh_run(host, script, env=None):
+        call_order.append(f"rm -rf ssh ({host})")
+        return RunResult(rc=0, stdout="", stderr="")
+
+    monkeypatch.setattr(stack_mod, "down", fake_down)
+    monkeypatch.setattr(install_mod, "run", fake_run)
+    monkeypatch.setattr(install_mod, "ssh_run", fake_ssh_run)
+
+    cfg = StackConfig(workdir="~/.spectator")
+
+    # Local
+    install_mod.uninstall(cfg, host=None)
+    assert call_order == ["stack.down", "rm -rf bash"]
+
+    # Remote
+    call_order.clear()
+    install_mod.uninstall(cfg, host="myspark1-local")
+    assert call_order == ["stack.down", "rm -rf ssh (myspark1-local)"]
+
+
+def test_uninstall_cli_help_advertises_safety_flags() -> None:
+    """`spectator uninstall --help` documents both --target and --force."""
+    from typer.testing import CliRunner
+
+    from src.cli import app
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["uninstall", "--help"])
+    assert r.exit_code == 0
+    assert "--force" in r.stdout
+    assert "--target" in r.stdout
+    assert "--workdir" in r.stdout
+    # The docstring should make clear this is destructive (mention
+    # remove or rm in some form).
+    assert "remove" in r.stdout.lower() or "rm " in r.stdout.lower()
+
+
 def test_deploy_remote_uv_sync_includes_dev_and_writes_install_stamp() -> None:
     """v0.3.9: deploy.py's remote uv-sync over SSH must (a) install dev
     deps so the wrapper's deps_ready() probe passes on the target, and

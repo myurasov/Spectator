@@ -140,10 +140,11 @@ directly. Spectator is invoked as a Python module, not a console script.
   [bold]preflight[/bold]   driver / CUDA / docker / nvidia-ctk / NGC checks
   [bold]install[/bold]     clone VSS repo + user-local cache cleaner + NGC docker login
               ([italic]--apply-system[/italic] for nvidia-ctk + usermod + restart docker)
+  [bold]uninstall[/bold]   stop everything + remove [italic]$workdir/[/italic] (inverse of install)
   [bold]rsync[/bold]       rsync this tool to a remote host (just files, no install)
   [bold]deploy[/bold]      full sync: rsync + remote uv sync + remote install
   [bold]up[/bold]          start the VSS stack (in tmux, survives ssh disconnect)
-  [bold]down[/bold]        stop the stack
+  [bold]down[/bold]        stop the stack (everything launched by Spectator; no disk removal)
   [bold]status[/bold]      tmux + docker compose ps + UI port + GPU
   [bold]logs[/bold]        tail the bring-up log or a specific docker service
   [bold]ui[/bold]          print the UI URL + ssh-port-forward recipe
@@ -208,6 +209,60 @@ def install(
         rc = install_mod.install_local(cfg, apply_system=apply_system)
         if rc != 0:
             raise typer.Exit(rc)
+
+
+@app.command()
+def uninstall(
+    target: Optional[str] = typer.Option(None, "--target", "-t",
+        help="SSH host to uninstall on (default: local)."),
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",
+        help="Path of the Spectator $workdir to remove on the target."),
+    force: bool = typer.Option(False, "--force", "-y",
+        help="Skip the confirmation prompt. Required for non-interactive "
+             "scripts (e.g. CI cleanup, cron)."),
+):
+    """Stop everything Spectator launches and remove $workdir/ from the target.
+
+    Inverse of `install`. Calls `down` first (so VSS containers and tmux
+    sessions exit cleanly), then `rm -rf` the entire $workdir tree
+    (Spectator code, audio-venv, ui-server state, VSS clone, audio-out
+    transcripts, logs).
+
+    Does NOT touch:
+
+      * Docker images cached locally (~30 GB; re-pulling takes 30-45
+        min, so we leave them alone — list with `docker images | grep
+        nvcr.io`, remove with `docker rmi`).
+      * `~/.docker/config.json` NGC docker login entry (revoke with
+        `docker logout nvcr.io`).
+      * System-level mutations from `install --apply-system`
+        (nvidia-ctk runtime config, docker group membership). These
+        require explicit admin reversal.
+      * `~/.local/bin/uv` (used by other projects too).
+
+    Use `down` instead if you just want to stop the stack and keep
+    $workdir on disk for later bring-up.
+    """
+    cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
+
+    where = f"on [bold]{target}[/bold]" if target else "[bold]locally[/bold]"
+    console.print(
+        f"[yellow]This will stop everything Spectator launches {where} "
+        f"and remove [bold]{workdir}/[/bold] (the entire workdir, including "
+        f"VSS clone, audio-venv, ui-server state, and any transcripts in "
+        f"audio-out/).[/yellow]"
+    )
+    if not force:
+        if not typer.confirm("Proceed?", default=False):
+            console.print("[dim]aborted; no changes made.[/dim]")
+            raise typer.Exit(0)
+
+    r = install_mod.uninstall(cfg, host=target)
+    if r.stdout:
+        console.print(r.stdout)
+    if not r.ok:
+        console.print(f"[red]uninstall finished with rc={r.rc}[/red]\n{r.stderr}")
+        raise typer.Exit(1)
 
 
 @app.command()

@@ -251,3 +251,17 @@ when the maintainer adds or removes items here.)
   for the wrapper filename, Python module, env vars, and CLI verbs —
   but the on-target rsync target dir is capitalized because it's the
   project name humans see in `ls`. (May 2026, v0.3.0)
+
+- **`down` is non-destructive; `uninstall` does the rm -rf**:
+  `spectator down` stops everything Spectator launches (VSS docker
+  stack, `spectator-up` tmux, per-job `audio-*` tmux sessions) but
+  never touches disk under `$workdir/`. The next `up` is fast because
+  the VSS clone, audio-venv, and docker image cache all survive.
+  `spectator uninstall` is the inverse-of-install verb: it runs
+  `down` first, then `rm -rf $workdir/`. By design it leaves docker
+  images, `~/.docker/config.json` NGC login, and `--apply-system`
+  mutations alone — those need separate manual reversal because
+  they're shared with the rest of the user's tooling (other NIM
+  containers, other registries, system-level docker config). New
+  code that grows `down`'s footprint MUST stay non-destructive; new
+  cleanup behavior belongs in `uninstall`. (May 2026, v0.4.0)

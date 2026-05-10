@@ -36,7 +36,7 @@ import textwrap
 
 from rich.console import Console
 
-from . import config
+from . import config, stack
 from ._run import RunResult, run, ssh_run
 
 console = Console()
@@ -240,6 +240,94 @@ def install_remote(host: str, cfg: config.StackConfig, *,
         pieces.append(_system_install_script())
     script = "\n\n".join(pieces)
     return ssh_run(host, script, env=cfg.env_block())
+
+
+def _uninstall_script(workdir: str, vss_checkout: str) -> str:
+    """Bash payload that removes ``$workdir`` and prints a summary of what
+    Spectator did NOT touch (docker images, NGC docker login,
+    ``--apply-system`` mutations).
+
+    ``stack.down()`` runs first (separate ssh_run call) so the docker
+    stack is stopped and tmux sessions are killed before we nuke the
+    bind-mount source paths under ``$workdir/``."""
+    return textwrap.dedent(f'''
+        set -e
+
+        # Sanity-clamp the path before rm -rf — refuse anything that
+        # could be misinterpreted (empty, "/", or doesn't end up under
+        # the user's $HOME). Belt-and-suspenders against a future bug
+        # where cfg.workdir comes in malformed.
+        WORKDIR="{workdir}"
+        if [ -z "$WORKDIR" ] || [ "$WORKDIR" = "/" ] || [ "$WORKDIR" = "$HOME" ]; then
+          echo "==== refusing to rm -rf $WORKDIR ($WORKDIR is empty, /, or \\$HOME) ===="
+          exit 1
+        fi
+
+        # Tilde-expand for the rm. _expand_tilde handles "~" -> "$HOME"
+        # but not arbitrary middle-of-path home-dir refs; that's fine
+        # because cfg.workdir always comes from DEFAULT_REMOTE_WORKDIR
+        # (a leading-tilde path) or an explicit --workdir flag the user
+        # typed.
+        case "$WORKDIR" in
+          "~/"*) WORKDIR="$HOME/${{WORKDIR#~/}}" ;;
+          "~")   WORKDIR="$HOME" ;;
+        esac
+
+        if [ ! -d "$WORKDIR" ]; then
+          echo "==== nothing to remove: $WORKDIR does not exist ===="
+        else
+          echo "==== removing $WORKDIR ===="
+          rm -rf "$WORKDIR"
+          echo "  ✓ removed"
+        fi
+
+        echo
+        echo "==== left untouched (remove manually if desired) ===="
+        echo "  - Docker images pulled by VSS (~30 GB cached). To list:"
+        echo "      docker images | grep -E 'nvcr.io|nim'"
+        echo "    To remove: docker rmi <image-id> ..."
+        echo "  - NGC docker login at ~/.docker/config.json (nvcr.io entry)."
+        echo "    To revoke: docker logout nvcr.io"
+        echo "  - System-level mutations from \\`spectator install --apply-system\\`"
+        echo "    (nvidia-ctk runtime, docker group). Reverse manually if needed:"
+        echo "      sudo gpasswd -d \\$USER docker"
+        echo "      # nvidia-ctk runtime configure has no built-in --revert."
+        echo "  - uv binary at ~/.local/bin/uv (used by other projects too,"
+        echo "    so we don't auto-remove)."
+        echo
+        echo "==== uninstall done ===="
+    ''').strip()
+
+
+def uninstall(cfg: config.StackConfig, host: str | None) -> RunResult:
+    """Stop everything Spectator launches, then remove ``$workdir/``.
+
+    Pairs with :func:`spectator.install.install_local` /
+    :func:`install_remote` as the disk-cleanup inverse. Distinct from
+    :func:`spectator.stack.down`, which only stops processes /
+    containers / tmux sessions and leaves the install on disk for next
+    bring-up.
+
+    Caller is responsible for the user-facing confirmation prompt
+    (the CLI verb does that); this function is the unconditional
+    machinery: stack.down + rm -rf + summary print.
+    """
+    # Step 1: stop everything via the existing stack.down(). That
+    # already kills the dev-profile.sh stack, the spectator-up tmux
+    # session, and any audio-* tmux sessions. No-op if nothing was
+    # running.
+    down_result = stack.down(cfg, host=host)
+    # We deliberately ignore down_result.ok — `down` is best-effort,
+    # and a failure shouldn't block disk cleanup. (E.g. if the stack
+    # is already stopped, dev-profile.sh down might exit non-zero.)
+    if down_result.stdout:
+        console.print(down_result.stdout)
+
+    # Step 2: rm -rf $workdir + summary.
+    script = _uninstall_script(cfg.workdir, cfg.vss_checkout)
+    if host:
+        return ssh_run(host, script)
+    return run(["bash", "-c", script])
 
 
 def start_cache_cleaner(host: str | None, cfg: config.StackConfig) -> RunResult:
