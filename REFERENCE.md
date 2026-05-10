@@ -272,7 +272,7 @@ Use `./spectator deploy …` when you've changed `pyproject.toml` (deps) or want
 
 ### Conflict detection on repeated `start`
 
-`ui-server start` is idempotent on its happy path — re-running it while the server is already up just prints a "Web UI already running" reminder. **As of v0.3.1**, that idempotency check also compares the requested `--bind` / `--port` against the running server's persisted config (`server.json`) and refuses with an error if they differ:
+`ui-server start` is idempotent on its happy path — re-running it while the server is already up just prints a "Web UI already running" reminder. The idempotency check compares the requested `--bind` / `--port` / `--target` against the running server's persisted config (`server.json`) and refuses with an error if any of them differ:
 
 ```
 $ ./spectator ui-server start                    # default bind 127.0.0.1
@@ -280,15 +280,25 @@ Web UI started (pid 12345).
   url: http://127.0.0.1:7777/
 
 $ ./spectator ui-server start --bind 0.0.0.0     # asking for a different bind
-Conflict: Web UI already running (pid 12345) with --bind 127.0.0.1 --port 7777,
-but you asked for --bind 0.0.0.0 --port 7777.
+Conflict: Web UI already running (pid 12345) with:
+  --bind 127.0.0.1 (asked for 0.0.0.0)
+
 Stop it first to apply the new flags:
 
   ./spectator ui-server stop
   ./spectator ui-server start --bind 0.0.0.0 --port 7777
 ```
 
-Before v0.3.1 the second invocation silently no-op'd — the running server stayed bound to 127.0.0.1 and the user got a misleading `url: http://0.0.0.0:7777/` echo of the flag they'd just typed. If you upgrade and find your bind isn't taking effect, `ui-server stop && ui-server start --bind 0.0.0.0` is always safe.
+Before v0.3.1 the second invocation silently no-op'd, leaving the server bound to the original address and printing a misleading `url:` line that just echoed the user's new flags.
+
+### Legacy-workdir scan (v0.3.3+)
+
+The same-`$workdir` conflict check above only sees servers whose state lives at the requested `$workdir`. When the default `$workdir` itself changes between releases (`v0.2.x ~/spectator → v0.3.0 ~/.spectator-workdir → v0.3.2 ~/.spectator`), a Web UI server started before the upgrade keeps running under the **old** path, invisible to the new `start` invocation.
+
+`ui-server start` therefore also scans every historical default `$workdir` (the `LEGACY_WORKDIRS` constant in `webui/server.py`) for any pid-alive Web UI server. On a hit:
+
+- **Same port** → hard error. The new uvicorn would fail to bind anyway, and the old server's stale `$workdir` would also break VSS calls (`cd $workdir/video-search-and-summarization` against a path that no longer holds the install).
+- **Different port** → yellow warning. The two servers can coexist, but if the old one is leftover from an upgrade it's worth retiring it explicitly with `./spectator ui-server stop --workdir <legacy>`.
 
 ### HTTP surface (REST + WebSocket)
 

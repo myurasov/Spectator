@@ -320,3 +320,110 @@ def test_read_server_config_returns_none_on_non_dict_payload(
     cf.write_text("[1, 2, 3]")
 
     assert read_server_config(str(tmp_path)) is None
+
+
+# ---------------------------------------------------------------------------
+# Legacy-workdir scan (v0.3.3) — when the user upgrades across a default-
+# workdir change (v0.2.x ~/spectator -> v0.3.0 ~/.spectator-workdir ->
+# v0.3.2 ~/.spectator), `ui-server start` should surface any Web UI server
+# still running under the prior default rather than silently spawning a
+# second one (which would either lose the port or run with a stale workdir).
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_workdirs_constant_includes_known_prior_defaults() -> None:
+    """The constant is the public contract for the scan — pin both names
+    so a careless edit doesn't drop one and break the upgrade UX."""
+    from src.webui.server import LEGACY_WORKDIRS
+
+    assert "~/spectator" in LEGACY_WORKDIRS
+    assert "~/.spectator-workdir" in LEGACY_WORKDIRS
+
+
+def test_find_legacy_running_server_returns_none_on_clean_state(
+    tmp_path: Path,
+) -> None:
+    """No legacy state-dirs anywhere -> None. Sanity check before the
+    positive cases: this is the path most users hit."""
+    from src.webui import server as ui_server
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    import os
+
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(fake_home)
+    try:
+        assert ui_server.find_legacy_running_server(str(tmp_path / "current")) is None
+    finally:
+        if old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = old_home
+
+
+def test_find_legacy_running_server_skips_dead_pid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A pid_file pointing at a long-dead PID -> ignored. The scan must
+    not mistake stale state for a running server."""
+    from src.webui import server as ui_server
+
+    fake_home = tmp_path / "home"
+    legacy_root = fake_home / ".spectator-workdir" / "ui-server"
+    legacy_root.mkdir(parents=True)
+    (legacy_root / "server.pid").write_text("999999")  # almost certainly dead
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    assert ui_server.find_legacy_running_server(str(tmp_path / "current")) is None
+
+
+def test_find_legacy_running_server_finds_live_pid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A pid_file pointing at this very test process (definitely alive) plus
+    a server.json -> the helper returns the recorded config."""
+    import os
+
+    from src.webui import server as ui_server
+
+    fake_home = tmp_path / "home"
+    legacy_root = fake_home / ".spectator-workdir" / "ui-server"
+    legacy_root.mkdir(parents=True)
+    (legacy_root / "server.pid").write_text(str(os.getpid()))
+    (legacy_root / "server.json").write_text(
+        '{"bind": "127.0.0.1", "port": 7777, '
+        '"target": "myspark1-local", "workdir": "~/.spectator-workdir"}'
+    )
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    hit = ui_server.find_legacy_running_server(str(tmp_path / "current"))
+    assert hit is not None
+    assert hit["workdir"] == "~/.spectator-workdir"
+    assert hit["pid"] == os.getpid()
+    assert hit["bind"] == "127.0.0.1"
+    assert hit["port"] == 7777
+    assert hit["target"] == "myspark1-local"
+
+
+def test_find_legacy_running_server_skips_when_legacy_path_is_current(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If the user is *intentionally* running on a legacy path (e.g. they
+    explicitly passed `--workdir ~/.spectator-workdir`), the helper
+    should return None for that path — it's the current target, not a
+    legacy leftover."""
+    import os
+
+    from src.webui import server as ui_server
+
+    fake_home = tmp_path / "home"
+    legacy_root = fake_home / ".spectator-workdir" / "ui-server"
+    legacy_root.mkdir(parents=True)
+    (legacy_root / "server.pid").write_text(str(os.getpid()))
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    # Pass the same path as `current_workdir` — should be skipped.
+    assert (
+        ui_server.find_legacy_running_server("~/.spectator-workdir") is None
+    )

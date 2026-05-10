@@ -117,6 +117,59 @@ def server_state_paths(workdir: str) -> dict[str, Path]:
     }
 
 
+# Workdirs Spectator has used as the default in past releases. The CLI's
+# `ui-server start` scans these for stale running servers when starting
+# a fresh server, so a user upgrading across a default-path change
+# (e.g. v0.2.x ~/spectator -> v0.3.0 ~/.spectator-workdir -> v0.3.2
+# ~/.spectator) hits a clear "stop the legacy server first" error
+# instead of a silent port-conflict or a VSS call against a stale workdir.
+LEGACY_WORKDIRS: tuple[str, ...] = (
+    "~/spectator",            # v0.2.x default
+    "~/.spectator-workdir",   # v0.3.0 / v0.3.1 default
+)
+
+
+def find_legacy_running_server(
+    current_workdir: str,
+) -> dict[str, Any] | None:
+    """Look for a Web UI server still running under one of the historical
+    default workdirs. Returns a dict with keys ``workdir / pid / bind /
+    port / target`` for the first hit, or ``None`` if all the legacy
+    paths are clean.
+
+    The lookup is purely filesystem + ``os.kill(pid, 0)`` — no network
+    probe, no signal — so it's cheap and safe to call on every ``start``."""
+    import os
+
+    current_resolved = os.path.realpath(os.path.expanduser(current_workdir))
+    for legacy in LEGACY_WORKDIRS:
+        legacy_resolved = os.path.realpath(os.path.expanduser(legacy))
+        if legacy_resolved == current_resolved:
+            continue
+        paths = server_state_paths(legacy)
+        if not paths["pid_file"].is_file():
+            continue
+        try:
+            legacy_pid = int(paths["pid_file"].read_text().strip())
+        except (ValueError, OSError):
+            continue
+        try:
+            os.kill(legacy_pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            pass
+        cfg = read_server_config(legacy) or {}
+        return {
+            "workdir": legacy,
+            "pid": legacy_pid,
+            "bind": cfg.get("bind"),
+            "port": cfg.get("port"),
+            "target": cfg.get("target") or None,
+        }
+    return None
+
+
 def read_server_config(workdir: str) -> dict[str, Any] | None:
     """Load the persisted server config (bind, port, target, workdir) of
     a running server. Returns ``None`` when the config file is missing or
@@ -168,4 +221,6 @@ __all__ = [
     "server_state_paths",
     "read_server_config",
     "write_server_config",
+    "LEGACY_WORKDIRS",
+    "find_legacy_running_server",
 ]

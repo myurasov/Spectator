@@ -580,29 +580,75 @@ def ui_server_start(
         # An existing PID is alive. Read the persisted config so we can
         # tell the user what the running server is *actually* bound to —
         # NOT the flag values they just typed (those would be misleading
-        # if they're trying to switch from 127.0.0.1 to 0.0.0.0).
+        # if they're trying to switch from 127.0.0.1 to 0.0.0.0, or from
+        # one --target to another).
         running_cfg = ui_server.read_server_config(workdir) or {}
         actual_bind = running_cfg.get("bind", "?")
         actual_port = running_cfg.get("port", "?")
-        actual_target = running_cfg.get("target") or "local"
-        conflict = actual_bind != bind or actual_port != port
-        if conflict:
-            console.print(
-                f"[red]Conflict:[/red] Web UI already running (pid {existing}) "
-                f"with [bold]--bind {actual_bind} --port {actual_port}[/bold], "
-                f"but you asked for [bold]--bind {bind} --port {port}[/bold]."
+        actual_target_raw = running_cfg.get("target") or ""
+        actual_target_display = actual_target_raw or "local"
+        target_display = target or "local"
+
+        mismatches = []
+        if actual_bind != bind:
+            mismatches.append(f"--bind {actual_bind} (asked for {bind})")
+        if actual_port != port:
+            mismatches.append(f"--port {actual_port} (asked for {port})")
+        if actual_target_raw != (target or ""):
+            mismatches.append(
+                f"--target {actual_target_display} (asked for {target_display})"
             )
+        if mismatches:
             console.print(
-                "Stop it first to apply the new flags:\n\n"
+                f"[red]Conflict:[/red] Web UI already running (pid {existing}) with:"
+            )
+            for m in mismatches:
+                console.print(f"  {m}")
+            console.print(
+                "\nStop it first to apply the new flags:\n\n"
                 "  ./spectator ui-server stop\n"
                 f"  ./spectator ui-server start --bind {bind} --port {port}"
+                + (f" --target {target}" if target else "")
             )
             raise typer.Exit(code=1)
         console.print(f"[yellow]Web UI already running[/yellow] (pid {existing}).")
         console.print(f"  url: http://{actual_bind}:{actual_port}/")
         console.print(f"  log: {log_file}")
-        console.print(f"  target: {actual_target}")
+        console.print(f"  target: {actual_target_display}")
         return
+
+    # No server at the requested workdir — but maybe a stale one is still
+    # running under a historical default workdir (e.g. ~/.spectator-workdir
+    # from before v0.3.2). Surface that BEFORE spawning the new uvicorn,
+    # because (a) if it's on the same port, the new one would fail to bind,
+    # and (b) even if ports differ, a stale server pointing at an old
+    # workdir will fail VSS calls with "cd: no such directory" — not
+    # what the user wants, and the diagnostic from there is opaque.
+    legacy = ui_server.find_legacy_running_server(workdir)
+    if legacy is not None:
+        legacy_target = legacy.get("target") or "local"
+        legacy_port = legacy.get("port", "?")
+        same_port = legacy.get("port") == port
+        severity = "[red]Conflict:[/red]" if same_port else "[yellow]Heads-up:[/yellow]"
+        console.print(
+            f"{severity} a Web UI server is already running at the legacy workdir "
+            f"[bold]{legacy['workdir']}[/bold] (pid {legacy['pid']}, "
+            f"bind {legacy.get('bind')}, port {legacy_port}, target {legacy_target})."
+        )
+        if same_port:
+            console.print(
+                "It's bound to the same port you just asked for, so the new server "
+                "would fail to start. Stop it first:\n\n"
+                f"  ./spectator ui-server stop --workdir {legacy['workdir']}\n"
+                f"  ./spectator ui-server start --bind {bind} --port {port}"
+                + (f" --target {target}" if target else "")
+            )
+            raise typer.Exit(code=1)
+        console.print(
+            "Different port, so both can coexist — but if it's a leftover from "
+            "an upgrade, you probably want to retire it:\n\n"
+            f"  ./spectator ui-server stop --workdir {legacy['workdir']}"
+        )
 
     # Detached uvicorn. We deliberately don't import uvicorn in the parent
     # — the child resolves it from the venv on its own. PYTHONPATH is set
