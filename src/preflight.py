@@ -183,11 +183,21 @@ def collect_checks(host: str | None = None,
     #      reaches every bash payload Spectator ssh-execs.
     #   3. (NGC only) ~/.ngc/api_key on the target — the upstream NGC
     #      playbook convention; docker login picks this up too.
+    # Bash-expand the workdir before testing — `[ -f "~/foo" ]` does
+    # NOT tilde-expand inside double quotes, so we translate a leading
+    # ~ into $HOME first (and let `$HOME` expand inside the quotes).
+    if workdir.startswith("~/"):
+        workdir_bash = "$HOME/" + workdir[2:]
+    elif workdir == "~":
+        workdir_bash = "$HOME"
+    else:
+        workdir_bash = workdir
+
     creds_check = _exec(
         host,
-        f'if [ -f "{workdir}/.creds" ]; then '
+        f'if [ -f "{workdir_bash}/.creds" ]; then '
         '  set -a; '
-        f'  . "{workdir}/.creds"; '
+        f'  . "{workdir_bash}/.creds"; '
         '  set +a; '
         '  echo "NGC=${NGC_CLI_API_KEY:+SET}"; '
         '  echo "NVIDIA=${NVIDIA_API_KEY:+SET}"; '

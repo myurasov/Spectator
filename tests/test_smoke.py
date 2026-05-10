@@ -341,9 +341,12 @@ def test_preflight_finds_creds_in_workdir(monkeypatch) -> None:
     assert "in ~/.spectator/.creds on target" in by_name["NVIDIA API key"].detail
 
     # Sanity: the .creds probe was actually invoked, with the right path.
+    # workdir "~/.spectator" gets bash-expanded to "$HOME/.spectator"
+    # before the `[ -f ... ]` test, because double-quoted "~" doesn't
+    # tilde-expand.
     creds_probes = [s for s in captured_scripts if "/.creds" in s]
     assert creds_probes, "preflight should ssh-probe $workdir/.creds"
-    assert any("~/.spectator/.creds" in s for s in creds_probes)
+    assert any("$HOME/.spectator/.creds" in s for s in creds_probes)
 
 
 def test_preflight_falls_back_to_driving_shell_env_when_creds_absent(monkeypatch) -> None:
