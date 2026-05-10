@@ -97,13 +97,20 @@ def deploy(host: str, cfg: config.StackConfig, *, do_install: bool = True,
         # for pytest + ruff alongside the runtime deps) pass on the
         # remote without an extra `./spectator install` round-trip.
         uv sync --extra dev
-        # Drop the install stamp the wrapper checks for — without this,
-        # every wrapper invocation on the remote re-enters bootstrap,
-        # which calls require_uv. On a host where uv was deleted after
-        # deploy (or where ~/.local/bin isn't on the non-interactive
-        # SSH PATH), that would die with 'uv is required' even though
-        # .venv is fully populated.
-        touch .venv/.spectator-installed
+        # Write the pyproject.toml content hash into the install stamp.
+        # The wrapper's bootstrap() checks the stamp's recorded hash
+        # against the current pyproject.toml's hash to decide whether
+        # to take the fast path (skip require_uv). Writing the hash
+        # here means a subsequent `./spectator rsync` of an unchanged
+        # pyproject.toml leaves the hash matching → fast path stays
+        # live, even though rsync bumps the file's mtime.
+        if command -v shasum >/dev/null 2>&1; then
+          shasum -a 256 pyproject.toml | cut -d' ' -f1 > .venv/.spectator-installed
+        elif command -v sha256sum >/dev/null 2>&1; then
+          sha256sum pyproject.toml | cut -d' ' -f1 > .venv/.spectator-installed
+        else
+          touch .venv/.spectator-installed
+        fi
         echo "==== uv install complete (invoke as 'uv run python -m src') ===="
         ls -la .venv/bin/python
     """)

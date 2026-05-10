@@ -474,20 +474,21 @@ def test_uninstall_cli_help_advertises_safety_flags() -> None:
 
 
 def test_deploy_remote_uv_sync_includes_dev_and_writes_install_stamp() -> None:
-    """v0.3.9: deploy.py's remote uv-sync over SSH must (a) install dev
-    deps so the wrapper's deps_ready() probe passes on the target, and
-    (b) drop the .venv/.spectator-installed stamp file so the wrapper's
-    fast-path skips require_uv on subsequent invocations.
+    """v0.3.9 + v0.4.3: deploy.py's remote uv-sync over SSH must
+    (a) install dev deps so the wrapper's deps_ready() probe passes on
+    the target, (b) write a content-hash of pyproject.toml into the
+    install stamp so the wrapper's fast-path skips require_uv on
+    subsequent invocations even after a no-op `./spectator rsync`
+    (which bumps pyproject.toml's mtime but leaves content unchanged),
+    and (c) fall back to `touch` if neither shasum nor sha256sum is
+    available — the wrapper's bootstrap() treats an empty stamp as a
+    legacy v0.3.9-v0.4.2 stamp and self-heals.
 
     Without (a), `./spectator <verb>` on a deployed target fails the
-    pytest/ruff existence checks. Without (b), the wrapper re-enters
-    bootstrap on every invocation, which means `require_uv` runs even
-    when the venv is fully populated — and on a non-interactive SSH
-    session (no ~/.local/bin on PATH) or a host where uv was deleted
-    post-deploy, that path explodes with 'uv is required'.
-
-    Pin both pieces of the rendered SSH script so future edits can't
-    silently regress."""
+    pytest/ruff existence checks. Without (b), every rsync invalidates
+    the fast-path because mtime is newer than the stamp. Without (c),
+    a host that lacks both hashing tools would have no stamp at all
+    and the wrapper would never take the fast path."""
     import inspect
 
     from src import deploy
@@ -497,9 +498,188 @@ def test_deploy_remote_uv_sync_includes_dev_and_writes_install_stamp() -> None:
         "deploy.py's remote uv-sync must use --extra dev so the wrapper's "
         "deps_ready() check passes on the target."
     )
-    assert "touch .venv/.spectator-installed" in src_text, (
-        "deploy.py must drop the wrapper's install stamp so the v0.3.8 "
-        "fast-path (skip require_uv when venv is healthy) actually triggers."
+    # Both hashing tools must be tried (shasum first since it's in
+    # macOS's default Perl distribution; sha256sum as Linux fallback)
+    # before falling through to a bare `touch`.
+    assert "shasum -a 256 pyproject.toml" in src_text
+    assert "sha256sum pyproject.toml" in src_text
+    # cut -d' ' -f1 extracts just the hash (drops the filename column).
+    # We use cut, not awk '{print $1}', because the latter's braces
+    # collide with f-string interpolation in the heredoc.
+    assert "cut -d' ' -f1" in src_text
+    assert "touch .venv/.spectator-installed" in src_text  # final fallback
+    assert ".spectator-installed" in src_text  # the stamp path itself
+
+
+def _build_fake_project_for_wrapper_tests(tmp_path):
+    """Helper: build a minimal project tree (wrapper + pyproject + fake
+    .venv with the executables deps_ready probes for) so the wrapper
+    will take its fast path under a sabotaged PATH (no uv).
+
+    Returns (proj_root, install_stamp). Both wrapper-fast-path tests
+    use this — keeps the boilerplate together."""
+    import os
+    import shutil
+    import stat
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_src = repo_root / "spectator"
+    pyproject_src = repo_root / "pyproject.toml"
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    shutil.copy(wrapper_src, proj / "spectator")
+    (proj / "spectator").chmod(0o755)
+    shutil.copy(pyproject_src, proj / "pyproject.toml")
+    (proj / "src").mkdir()
+    (proj / "src" / "__init__.py").write_text("")
+
+    venv_bin = proj / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    py_shim = venv_bin / "python"
+    py_shim.write_text("#!/bin/sh\nexit 0\n")
+    py_shim.chmod(py_shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    for name in ("pytest", "ruff"):
+        b = venv_bin / name
+        b.write_text("#!/bin/sh\nexit 0\n")
+        b.chmod(b.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    stamp = proj / ".venv" / ".spectator-installed"
+    return proj, stamp
+
+
+def _hash_file(path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_wrapper_fast_path_uses_content_hash_not_mtime(tmp_path) -> None:
+    """v0.4.3 regression test for the rsync-bumps-mtime trap.
+
+    Pre-v0.4.3, the wrapper's fast-path check used `pyproject.toml -nt
+    $INSTALL_STAMP` (mtime comparison). rsync bumps the receiving
+    file's mtime even when content is byte-identical, so every
+    `./spectator rsync --target HOST` followed by an SSH'd
+    `./spectator <verb>` on the remote re-entered bootstrap → fired
+    require_uv. On hosts where uv was deleted post-deploy, that
+    exploded with 'uv is required' even though .venv was fully
+    populated.
+
+    Fix: stamp file now stores the SHA256 of pyproject.toml's content;
+    the wrapper compares that hash, not mtime. So an mtime bump from
+    rsync that doesn't change content stays in the fast path.
+
+    Test: write the correct hash into the stamp, bump pyproject.toml's
+    mtime to be NEWER than the stamp (simulating post-rsync state),
+    sabotage PATH so uv is gone, and confirm `./spectator help`
+    succeeds without require_uv firing.
+    """
+    import os
+    import shutil
+    import subprocess
+
+    proj, stamp = _build_fake_project_for_wrapper_tests(tmp_path)
+    pyproject = proj / "pyproject.toml"
+
+    # Record the correct content hash in the stamp.
+    expected_hash = _hash_file(pyproject)
+    stamp.write_text(expected_hash)
+
+    # Bump pyproject's mtime to simulate post-rsync (newer than stamp,
+    # but content unchanged so hash still matches).
+    stamp_mtime = stamp.stat().st_mtime
+    os.utime(pyproject, (stamp_mtime + 60, stamp_mtime + 60))
+    assert pyproject.stat().st_mtime > stamp.stat().st_mtime, (
+        "test setup: pyproject must be newer than stamp"
+    )
+
+    # Sabotage PATH so uv isn't findable.
+    env = {**os.environ, "PATH": "/usr/bin:/bin"}
+    assert shutil.which("uv", path=env["PATH"]) is None
+
+    # Use `install` (which calls bootstrap), not `help` (which doesn't).
+    r = subprocess.run(
+        [str(proj / "spectator"), "install"],
+        cwd=str(proj), env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert r.returncode == 0, (
+        f"wrapper failed under sabotaged PATH despite content-hash match: "
+        f"rc={r.returncode}\n--stdout--\n{r.stdout}\n--stderr--\n{r.stderr}"
+    )
+    assert "uv is required" not in r.stderr
+    # `install` logs 'ready: ...' after bootstrap returns.
+    assert "ready" in r.stdout
+
+
+def test_wrapper_fast_path_re_syncs_when_pyproject_content_changes(tmp_path) -> None:
+    """If pyproject.toml's content actually changed (a real new dep was
+    added on the laptop and rsync'd over), the recorded hash no longer
+    matches and the wrapper falls through to require_uv → sync. That's
+    correct behavior — we'd want the new dep installed before
+    forwarding to the CLI.
+
+    Test: write a hash that DOESN'T match the current pyproject's
+    content, sabotage PATH, confirm the wrapper now DOES complain
+    about uv (proving the fast path got skipped)."""
+    import os
+    import shutil
+    import subprocess
+
+    proj, stamp = _build_fake_project_for_wrapper_tests(tmp_path)
+
+    # Write a bogus hash — simulates "stamp was for an older pyproject
+    # content; the current pyproject differs".
+    stamp.write_text("0" * 64)  # valid sha256 hex shape, just wrong value
+
+    env = {**os.environ, "PATH": "/usr/bin:/bin"}
+    # `install` calls bootstrap directly, so the hash mismatch here
+    # forces require_uv → die under the sabotaged PATH.
+    r = subprocess.run(
+        [str(proj / "spectator"), "install"],
+        cwd=str(proj), env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert "uv is required" in r.stderr, (
+        f"wrapper should have demanded uv (hash mismatch → re-sync needed),"
+        f" but it succeeded silently:\n--stdout--\n{r.stdout}\n--stderr--\n{r.stderr}"
+    )
+    assert r.returncode != 0
+
+
+def test_wrapper_self_heals_legacy_empty_stamp(tmp_path) -> None:
+    """A stamp from v0.3.9-v0.4.2 was empty (just `touch`'d). v0.4.3's
+    bootstrap() treats that as legacy and takes the fast path while
+    writing the new hash for next time. Sabotage PATH so we can also
+    verify uv is NOT required for the legacy-stamp path.
+
+    Note: we use `./spectator install` to trigger bootstrap (the verb
+    `help` short-circuits before bootstrap runs in the wrapper's case
+    statement). `install` calls bootstrap then logs 'ready: ...' — fast
+    path with our healthy fake .venv."""
+    import os
+    import shutil
+    import subprocess
+
+    proj, stamp = _build_fake_project_for_wrapper_tests(tmp_path)
+    stamp.write_text("")  # legacy empty stamp
+
+    env = {**os.environ, "PATH": "/usr/bin:/bin"}
+    r = subprocess.run(
+        [str(proj / "spectator"), "install"],
+        cwd=str(proj), env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert r.returncode == 0, (
+        f"legacy empty stamp should self-heal under sabotaged PATH, "
+        f"but the wrapper failed:\n--stdout--\n{r.stdout}\n--stderr--\n{r.stderr}"
+    )
+    assert "uv is required" not in r.stderr
+    assert "ready" in r.stdout  # confirms the install verb ran past bootstrap
+
+    # The stamp should now have the current pyproject's hash.
+    expected = _hash_file(proj / "pyproject.toml")
+    assert stamp.read_text().strip() == expected, (
+        f"legacy empty stamp wasn't self-healed; "
+        f"expected hash {expected!r}, got {stamp.read_text()!r}"
     )
 
 

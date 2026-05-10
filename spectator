@@ -62,10 +62,22 @@ deps_ready() {
   "$VENV_DIR/bin/python" -c "import typer, rich, httpx, yaml" >/dev/null 2>&1 || return 1
 }
 
+# Content hash of pyproject.toml. Used to detect dep-set changes
+# without depending on file mtimes (which `rsync` and various editors
+# bump even when content is unchanged). Works on macOS and Linux —
+# `shasum -a 256` is in Perl's standard distribution everywhere.
+pyproject_hash() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 pyproject.toml 2>/dev/null | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum pyproject.toml 2>/dev/null | awk '{print $1}'
+  fi
+}
+
 sync_deps() {
   log "syncing dependencies (uv sync --extra dev)"
   if uv sync --extra dev --quiet && deps_ready; then
-    touch "$INSTALL_STAMP"
+    pyproject_hash > "$INSTALL_STAMP" 2>/dev/null || touch "$INSTALL_STAMP"
     return
   fi
 
@@ -74,7 +86,7 @@ sync_deps() {
   ensure_venv
   uv sync --extra dev --quiet
   deps_ready || die "dependency sync finished but venv is incomplete; try ./spectator clean && ./spectator install"
-  touch "$INSTALL_STAMP"
+  pyproject_hash > "$INSTALL_STAMP" 2>/dev/null || touch "$INSTALL_STAMP"
 }
 
 ensure_deps() {
@@ -89,17 +101,35 @@ ensure_deps() {
 
 bootstrap() {
   local force="${1:-}"
-  # Fast path: if .venv is already populated with the dev deps and
-  # nothing has invalidated the install stamp, we can skip uv entirely.
-  # Useful in non-interactive SSH sessions where ~/.local/bin isn't on
-  # PATH, or on machines that never had uv installed in the first place
-  # but had .venv shipped via rsync (e.g. someone pre-deployed and
-  # then nuked uv during cleanup). A genuine re-sync still requires uv.
+  # Fast path: if .venv is already populated with the dev deps and the
+  # install stamp's recorded pyproject.toml content-hash matches the
+  # current pyproject.toml, skip uv entirely.
+  #
+  # We compare CONTENT, not mtime. mtime comparison was wrong because
+  # rsync bumps pyproject.toml's mtime past the stamp on every push,
+  # even if the content is identical, so the v0.3.8 fast-path got
+  # falsely invalidated on every remote rsync. A content hash compares
+  # what actually matters (deps + project metadata) and ignores
+  # tool-induced mtime churn.
+  #
+  # Backwards-compat: a legacy stamp (v0.3.9-v0.4.2) is empty (just
+  # `touch`'d). When we see an empty stamp AND deps_ready passes, we
+  # take the fast path AND write the new hash so future invocations
+  # don't re-fall-through. Self-healing migration.
   if [ "$force" != "--force" ] && \
      [ -f "$INSTALL_STAMP" ] && \
-     [ ! "pyproject.toml" -nt "$INSTALL_STAMP" ] && \
      deps_ready; then
-    return
+    local recorded; recorded="$(cat "$INSTALL_STAMP" 2>/dev/null)"
+    local expected; expected="$(pyproject_hash)"
+    if [ -z "$recorded" ]; then
+      # Legacy empty stamp from v0.3.9-v0.4.2. Trust deps_ready,
+      # write the hash for next time.
+      [ -n "$expected" ] && echo "$expected" > "$INSTALL_STAMP" 2>/dev/null
+      return
+    fi
+    if [ "$recorded" = "$expected" ] && [ -n "$expected" ]; then
+      return
+    fi
   fi
   require_uv
   ensure_venv
