@@ -89,9 +89,21 @@ ensure_deps() {
 
 bootstrap() {
   local force="${1:-}"
+  # Fast path: if .venv is already populated with the dev deps and
+  # nothing has invalidated the install stamp, we can skip uv entirely.
+  # Useful in non-interactive SSH sessions where ~/.local/bin isn't on
+  # PATH, or on machines that never had uv installed in the first place
+  # but had .venv shipped via rsync (e.g. someone pre-deployed and
+  # then nuked uv during cleanup). A genuine re-sync still requires uv.
+  if [ "$force" != "--force" ] && \
+     [ -f "$INSTALL_STAMP" ] && \
+     [ ! "pyproject.toml" -nt "$INSTALL_STAMP" ] && \
+     deps_ready; then
+    return
+  fi
   require_uv
   ensure_venv
-  ensure_deps "$force"
+  sync_deps
 }
 
 show_help() {

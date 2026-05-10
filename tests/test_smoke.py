@@ -216,6 +216,102 @@ def test_down_script_covers_every_spectator_launched_thing() -> None:
     assert "~/.spectator/bin/sys-cache-cleaner.sh" in script  # workdir interp
 
 
+def test_wrapper_bootstrap_skips_uv_when_venv_is_healthy(tmp_path) -> None:
+    """v0.3.8 regression test for the require-uv-even-when-cached bug.
+
+    Pre-v0.3.8, `bootstrap()` in the `./spectator` wrapper called
+    `require_uv` unconditionally, even when `.venv/` was already
+    populated with all the dev deps and the install stamp was fresh.
+    That broke the wrapper on hosts where uv isn't on PATH (typical
+    non-interactive SSH session) but the venv had been pre-deployed
+    via rsync, e.g. when running `./spectator audio presets` on the
+    Spark after `./spectator deploy --target …` from the laptop.
+
+    Fix: bootstrap takes a fast path that returns immediately if
+    .venv looks healthy, only invoking `require_uv` when an actual
+    sync would otherwise be needed.
+
+    Test: simulate a healthy-venv directory tree, run the wrapper with
+    a sabotaged PATH that has no uv, and confirm a no-op subcommand
+    works end to end. We use the wrapper itself (read from the repo
+    root) and rely on the fast-path triggering."""
+    import os
+    import shutil
+    import stat
+    import subprocess
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_src = repo_root / "spectator"
+    pyproject_src = repo_root / "pyproject.toml"
+
+    # Build a fake project tree under tmp_path mirroring the wrapper's
+    # expectations: spectator wrapper, pyproject.toml, src/, .venv/ with
+    # the deps_ready() probe targets.
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    shutil.copy(wrapper_src, proj / "spectator")
+    (proj / "spectator").chmod(0o755)
+    shutil.copy(pyproject_src, proj / "pyproject.toml")
+    # Minimal src/ package so `python -m src --help` resolves something
+    # — we don't actually invoke it, we just want the wrapper to NOT
+    # complain about missing uv. We invoke `./spectator help` which
+    # short-circuits before it would try to run python.
+    (proj / "src").mkdir()
+    (proj / "src" / "__init__.py").write_text("")
+    venv_bin = proj / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    # The wrapper's `deps_ready` probes need executable shims at these
+    # paths. We don't actually run them — `./spectator help` exits
+    # before that. But `deps_ready` does exec the python with `-c
+    # "import typer, rich, httpx, yaml"`. We make our shim succeed for
+    # any args.
+    py_shim = venv_bin / "python"
+    py_shim.write_text("#!/bin/sh\nexit 0\n")
+    py_shim.chmod(py_shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    for name in ("pytest", "ruff"):
+        b = venv_bin / name
+        b.write_text("#!/bin/sh\nexit 0\n")
+        b.chmod(b.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    # Mark the install stamp older than... nothing (the stamp itself is
+    # the freshness signal). Just creating it works because we set its
+    # mtime to be newer than pyproject.toml's mtime explicitly.
+    stamp = proj / ".venv" / ".spectator-installed"
+    stamp.write_text("")
+    pyproject_mtime = (proj / "pyproject.toml").stat().st_mtime
+    os.utime(stamp, (pyproject_mtime + 60, pyproject_mtime + 60))
+
+    # Sabotaged PATH: no uv anywhere.
+    env = {
+        **os.environ,
+        "PATH": "/usr/bin:/bin",
+    }
+    # Confirm the sabotage actually denied uv.
+    which = shutil.which("uv", path=env["PATH"])
+    assert which is None, f"PATH sabotage failed; uv found at {which!r}"
+
+    # Run `./spectator help` — should print help, exit 0, and never
+    # complain about uv.
+    r = subprocess.run(
+        [str(proj / "spectator"), "help"],
+        cwd=str(proj),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, (
+        f"wrapper failed under sabotaged PATH: rc={r.returncode}\n"
+        f"--stdout--\n{r.stdout}\n--stderr--\n{r.stderr}"
+    )
+    assert "uv is required" not in r.stderr, (
+        f"wrapper still complained about uv:\n{r.stderr}"
+    )
+    # `help` outputs the docstring banner.
+    assert "Spectator" in r.stdout
+    assert "wrapper" in r.stdout.lower() or "subcommand" in r.stdout.lower()
+
+
 def test_audio_transcribe_local_wrapper_emits_parseable_end_line(monkeypatch, tmp_path) -> None:
     """v0.3.7 regression test for the END-marker mismatch.
 
