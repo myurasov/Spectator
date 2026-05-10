@@ -265,9 +265,30 @@ Use `./spectator deploy …` when you've changed `pyproject.toml` (deps) or want
 
 - `server.pid` — current server's PID (used by `stop` / `status`)
 - `server.log` — uvicorn stdout / stderr; tailed by `ui-server logs`
+- `server.json` — the running server's actual `bind` / `port` / `target` / `workdir` (v0.3.1+); written by `start`, deleted by `stop`. Used to surface the real config in `status` and to detect when a follow-up `start` was passed conflicting flags
 - `jobs/<uuid>.json` — one persistent JSON file per job (the schema is the public contract for any agent watching alongside the UI)
 - `jobs/<uuid>.log` — captured stdout / stderr of the spawned subprocess (audio transcribe, video process)
 - `uploads/` — uploaded files; audio jobs are then copied to `$workdir/audio-in/<basename>` for Spectator to pick up
+
+### Conflict detection on repeated `start`
+
+`ui-server start` is idempotent on its happy path — re-running it while the server is already up just prints a "Web UI already running" reminder. **As of v0.3.1**, that idempotency check also compares the requested `--bind` / `--port` against the running server's persisted config (`server.json`) and refuses with an error if they differ:
+
+```
+$ ./spectator ui-server start                    # default bind 127.0.0.1
+Web UI started (pid 12345).
+  url: http://127.0.0.1:7777/
+
+$ ./spectator ui-server start --bind 0.0.0.0     # asking for a different bind
+Conflict: Web UI already running (pid 12345) with --bind 127.0.0.1 --port 7777,
+but you asked for --bind 0.0.0.0 --port 7777.
+Stop it first to apply the new flags:
+
+  ./spectator ui-server stop
+  ./spectator ui-server start --bind 0.0.0.0 --port 7777
+```
+
+Before v0.3.1 the second invocation silently no-op'd — the running server stayed bound to 127.0.0.1 and the user got a misleading `url: http://0.0.0.0:7777/` echo of the flag they'd just typed. If you upgrade and find your bind isn't taking effect, `ui-server stop && ui-server start --bind 0.0.0.0` is always safe.
 
 ### HTTP surface (REST + WebSocket)
 

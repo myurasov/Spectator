@@ -26,6 +26,7 @@ The app is mounted by the CLI's ``ui-server start`` verb under uvicorn.
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -69,9 +70,11 @@ def create_app(*, workdir: str, target: str | None) -> FastAPI:
         app.state.uploads_dir = uploads_dir
         yield
 
+    from .. import __version__ as _spectator_version
+
     app = FastAPI(
         title="Spectator Web UI",
-        version="0.2.0",
+        version=_spectator_version,
         lifespan=lifespan,
     )
 
@@ -108,9 +111,54 @@ def server_state_paths(workdir: str) -> dict[str, Path]:
         "root": root,
         "pid_file": root / "server.pid",
         "log_file": root / "server.log",
+        "config_file": root / "server.json",
         "jobs_dir": root / "jobs",
         "uploads_dir": root / "uploads",
     }
+
+
+def read_server_config(workdir: str) -> dict[str, Any] | None:
+    """Load the persisted server config (bind, port, target, workdir) of
+    a running server. Returns ``None`` when the config file is missing or
+    unreadable — callers should treat that as "no info; skip the check".
+
+    Pairs with :func:`write_server_config`. Used by ``ui-server start``
+    to detect when a follow-up ``start`` would otherwise be a silent
+    no-op (e.g. when the user passes ``--bind 0.0.0.0`` while a
+    127.0.0.1-bound instance is already running)."""
+    cf = server_state_paths(workdir)["config_file"]
+    if not cf.exists():
+        return None
+    try:
+        data = json.loads(cf.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_server_config(
+    workdir: str, *, bind: str, port: int, target: str | None
+) -> None:
+    """Persist the running server's bind / port / target / workdir into
+    ``$workdir/ui-server/server.json``.
+
+    Written by ``ui-server start`` immediately after spawning uvicorn;
+    deleted by ``ui-server stop``. The file is the canonical answer to
+    "where is the running server actually bound?", which the
+    user-supplied flag value is not (the flag may differ from a
+    previously-started running server)."""
+    cf = server_state_paths(workdir)["config_file"]
+    cf.parent.mkdir(parents=True, exist_ok=True)
+    cf.write_text(
+        json.dumps(
+            {
+                "bind": bind,
+                "port": port,
+                "target": target or "",
+                "workdir": workdir,
+            }
+        )
+    )
 
 
 __all__ = [
@@ -118,4 +166,6 @@ __all__ = [
     "workdir_root",
     "static_dir",
     "server_state_paths",
+    "read_server_config",
+    "write_server_config",
 ]

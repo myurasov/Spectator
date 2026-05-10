@@ -236,3 +236,87 @@ def test_path_traversal_blocked_on_output_download(client, tmp_path,
     r = client.get(f"/api/jobs/{job.id}/output/..%2Fetc%2Fpasswd")
     # ".." → not a single name; route returns 400.
     assert r.status_code in (400, 404)
+
+
+# ---------------------------------------------------------------------------
+# server.json persistence (v0.3.1) — backs the start-conflict detection so
+# `ui-server start --bind 0.0.0.0` while a 127.0.0.1-bound instance is
+# already running surfaces a clear error instead of a silent no-op.
+# ---------------------------------------------------------------------------
+
+
+def test_state_paths_exposes_config_file(tmp_path: Path) -> None:
+    from src.webui.server import server_state_paths
+
+    paths = server_state_paths(str(tmp_path))
+    assert "config_file" in paths
+    assert paths["config_file"].name == "server.json"
+    assert paths["config_file"].parent == paths["root"]
+
+
+def test_read_server_config_returns_none_when_absent(tmp_path: Path) -> None:
+    from src.webui.server import read_server_config
+
+    assert read_server_config(str(tmp_path)) is None
+
+
+def test_server_config_round_trips(tmp_path: Path) -> None:
+    from src.webui.server import (
+        read_server_config,
+        server_state_paths,
+        write_server_config,
+    )
+
+    write_server_config(
+        str(tmp_path), bind="0.0.0.0", port=7777, target="myspark1-local"
+    )
+    cf = server_state_paths(str(tmp_path))["config_file"]
+    assert cf.is_file()
+
+    cfg = read_server_config(str(tmp_path))
+    assert cfg == {
+        "bind": "0.0.0.0",
+        "port": 7777,
+        "target": "myspark1-local",
+        "workdir": str(tmp_path),
+    }
+
+
+def test_server_config_target_normalized_to_empty_string_when_none(
+    tmp_path: Path,
+) -> None:
+    """A None target serializes as "" so the file stays type-stable for
+    the conflict-detection comparison in `ui-server start`."""
+    from src.webui.server import read_server_config, write_server_config
+
+    write_server_config(str(tmp_path), bind="127.0.0.1", port=7777, target=None)
+    cfg = read_server_config(str(tmp_path))
+    assert cfg is not None
+    assert cfg["target"] == ""
+
+
+def test_read_server_config_returns_none_on_corrupt_json(tmp_path: Path) -> None:
+    """If server.json is unreadable / malformed, callers should get None
+    rather than an exception — the config file is advisory, not load-bearing."""
+    from src.webui.server import read_server_config, server_state_paths
+
+    cf = server_state_paths(str(tmp_path))["config_file"]
+    cf.parent.mkdir(parents=True, exist_ok=True)
+    cf.write_text("{not valid json")
+
+    assert read_server_config(str(tmp_path)) is None
+
+
+def test_read_server_config_returns_none_on_non_dict_payload(
+    tmp_path: Path,
+) -> None:
+    """A JSON payload that's syntactically valid but not an object (e.g.
+    a list) is treated like a missing file — defensive, in case a
+    future schema change writes a different top-level shape."""
+    from src.webui.server import read_server_config, server_state_paths
+
+    cf = server_state_paths(str(tmp_path))["config_file"]
+    cf.parent.mkdir(parents=True, exist_ok=True)
+    cf.write_text("[1, 2, 3]")
+
+    assert read_server_config(str(tmp_path)) is None

@@ -577,9 +577,31 @@ def ui_server_start(
 
     existing = _ui_server_pid_alive(pid_file)
     if existing is not None:
+        # An existing PID is alive. Read the persisted config so we can
+        # tell the user what the running server is *actually* bound to —
+        # NOT the flag values they just typed (those would be misleading
+        # if they're trying to switch from 127.0.0.1 to 0.0.0.0).
+        running_cfg = ui_server.read_server_config(workdir) or {}
+        actual_bind = running_cfg.get("bind", "?")
+        actual_port = running_cfg.get("port", "?")
+        actual_target = running_cfg.get("target") or "local"
+        conflict = actual_bind != bind or actual_port != port
+        if conflict:
+            console.print(
+                f"[red]Conflict:[/red] Web UI already running (pid {existing}) "
+                f"with [bold]--bind {actual_bind} --port {actual_port}[/bold], "
+                f"but you asked for [bold]--bind {bind} --port {port}[/bold]."
+            )
+            console.print(
+                "Stop it first to apply the new flags:\n\n"
+                "  ./spectator ui-server stop\n"
+                f"  ./spectator ui-server start --bind {bind} --port {port}"
+            )
+            raise typer.Exit(code=1)
         console.print(f"[yellow]Web UI already running[/yellow] (pid {existing}).")
-        console.print(f"  url: http://{bind}:{port}/")
+        console.print(f"  url: http://{actual_bind}:{actual_port}/")
         console.print(f"  log: {log_file}")
+        console.print(f"  target: {actual_target}")
         return
 
     # Detached uvicorn. We deliberately don't import uvicorn in the parent
@@ -614,6 +636,7 @@ def ui_server_start(
     )
     log_fh.close()
     pid_file.write_text(str(proc.pid))
+    ui_server.write_server_config(workdir, bind=bind, port=port, target=target)
 
     console.print(f"[green]Web UI started[/green] (pid {proc.pid}).")
     console.print(f"  url: http://{bind}:{port}/")
@@ -636,10 +659,12 @@ def ui_server_stop(
 
     paths = ui_server.server_state_paths(workdir)
     pid_file: Path = paths["pid_file"]
+    config_file: Path = paths["config_file"]
     pid = _ui_server_pid_alive(pid_file)
     if pid is None:
         if pid_file.is_file():
             pid_file.unlink()
+        config_file.unlink(missing_ok=True)
         console.print("[yellow]Web UI is not running.[/yellow]")
         return
 
@@ -653,6 +678,7 @@ def ui_server_stop(
         raise typer.Exit(1) from exc
 
     pid_file.unlink(missing_ok=True)
+    config_file.unlink(missing_ok=True)
     console.print(f"[green]Web UI stopped[/green] (was pid {pid}).")
 
 
@@ -667,6 +693,13 @@ def ui_server_status(
     pid = _ui_server_pid_alive(paths["pid_file"])
     if pid:
         console.print(f"[green]Web UI is running[/green] (pid {pid}).")
+        cfg = ui_server.read_server_config(workdir) or {}
+        if cfg:
+            bind_v = cfg.get("bind", "?")
+            port_v = cfg.get("port", "?")
+            target_v = cfg.get("target") or "local"
+            console.print(f"  url:        http://{bind_v}:{port_v}/")
+            console.print(f"  target:     {target_v}")
     else:
         console.print("[yellow]Web UI is not running.[/yellow]")
     console.print(f"  state root: {paths['root']}")
@@ -674,6 +707,7 @@ def ui_server_status(
     console.print(f"  uploads:    {paths['uploads_dir']}")
     console.print(f"  log file:   {paths['log_file']}")
     console.print(f"  pid file:   {paths['pid_file']}")
+    console.print(f"  config:     {paths['config_file']}")
 
 
 @ui_server_app.command("logs")
