@@ -303,6 +303,82 @@ def test_install_script_includes_creds_source_and_save_blocks() -> None:
     assert "~/.spectator/.creds" not in script
 
 
+def test_preflight_finds_creds_in_workdir(monkeypatch) -> None:
+    """v0.4.5: preflight's NGC / NVIDIA key checks should report
+    ``in $workdir/.creds`` when the file is present and contains the
+    keys, with priority over the driving-shell-env fallback. Mock
+    `_exec` to return what `set -a; . .creds; echo ${VAR:+SET}` would
+    produce on a target that has both keys persisted."""
+    from src import preflight as pm
+    from src._run import RunResult
+
+    captured_scripts: list[str] = []
+
+    def fake_exec(host, script):
+        captured_scripts.append(script)
+        # Match the bash patterns preflight uses. The .creds probe is
+        # the only one we care about for this test; every other probe
+        # we stub to "MISSING\n" so its check transitions to a non-OK
+        # state without blowing up on splitlines()[0].
+        if ".creds" in script and "set -a" in script:
+            return RunResult(rc=0, stdout="NGC=SET\nNVIDIA=SET\n", stderr="")
+        return RunResult(rc=0, stdout="MISSING\n", stderr="")
+
+    monkeypatch.setattr(pm, "_exec", fake_exec)
+    # Clear env-var fallback so we can see .creds win unambiguously.
+    monkeypatch.delenv("NGC_CLI_API_KEY", raising=False)
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+
+    checks = pm.collect_checks(host="myspark1-local", workdir="~/.spectator")
+    by_name = {c.name: c for c in checks}
+
+    assert "NGC API key" in by_name
+    assert by_name["NGC API key"].ok is True
+    assert "in ~/.spectator/.creds on target" in by_name["NGC API key"].detail
+
+    assert "NVIDIA API key" in by_name
+    assert by_name["NVIDIA API key"].ok is True
+    assert "in ~/.spectator/.creds on target" in by_name["NVIDIA API key"].detail
+
+    # Sanity: the .creds probe was actually invoked, with the right path.
+    creds_probes = [s for s in captured_scripts if "/.creds" in s]
+    assert creds_probes, "preflight should ssh-probe $workdir/.creds"
+    assert any("~/.spectator/.creds" in s for s in creds_probes)
+
+
+def test_preflight_falls_back_to_driving_shell_env_when_creds_absent(monkeypatch) -> None:
+    """If .creds doesn't exist on the target, preflight reports the
+    driving-shell env var. Pre-v0.4.4 behavior preserved as the
+    fallback."""
+    from src import preflight as pm
+    from src._run import RunResult
+
+    def fake_exec(host, script):
+        if ".creds" in script and "set -a" in script:
+            # No file → both empty. (Bash `${VAR:+SET}` is empty when
+            # the var is empty/unset.)
+            return RunResult(rc=0, stdout="NGC=\nNVIDIA=\n", stderr="")
+        if "test -f ~/.ngc/api_key" in script:
+            return RunResult(rc=0, stdout="absent\n", stderr="")
+        return RunResult(rc=0, stdout="MISSING\n", stderr="")  # short-circuit other probes
+
+    monkeypatch.setattr(pm, "_exec", fake_exec)
+    monkeypatch.setenv("NGC_CLI_API_KEY", "nvapi-from-shell")
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+
+    checks = pm.collect_checks(host="myspark1-local", workdir="~/.spectator")
+    by_name = {c.name: c for c in checks}
+
+    # NGC: env wins (creds empty).
+    assert by_name["NGC API key"].ok is True
+    assert "set in driving shell" in by_name["NGC API key"].detail
+    assert "first install will persist to .creds" in by_name["NGC API key"].detail
+
+    # NVIDIA: nothing anywhere → fail.
+    assert by_name["NVIDIA API key"].ok is False
+    assert "$workdir/.creds" in by_name["NVIDIA API key"].detail
+
+
 def test_stack_up_sources_creds_block() -> None:
     """spectator up needs NVIDIA_API_KEY for remote LLM auth and
     NGC_CLI_API_KEY for docker pull. After v0.4.4, the up bash payload

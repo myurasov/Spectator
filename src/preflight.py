@@ -61,8 +61,20 @@ def _version_ge(have: str, want: str) -> bool:
     return a >= b
 
 
-def collect_checks(host: str | None = None) -> list[Check]:
-    """Run all preflight checks against `host` (None = local)."""
+def collect_checks(host: str | None = None,
+                   workdir: str | None = None) -> list[Check]:
+    """Run all preflight checks against `host` (None = local).
+
+    `workdir` is used to probe ``$workdir/.creds`` for NGC / NVIDIA
+    keys (v0.4.4+; persistent creds store). Defaults to
+    ``config.DEFAULT_REMOTE_WORKDIR`` if None — the right answer for
+    99% of users.
+    """
+    from . import config as _config
+
+    if workdir is None:
+        workdir = _config.DEFAULT_REMOTE_WORKDIR
+
     out: list[Check] = []
 
     # nvidia-smi + driver version
@@ -164,14 +176,42 @@ def collect_checks(host: str | None = None) -> list[Check]:
     else:
         out.append(Check("ffmpeg", True, r.stdout.strip().splitlines()[-1][:60]))
 
-    # NGC API key — env var on the driving shell counts (we forward it over
-    # SSH); the playbook's `~/.ngc/api_key` file on the target also counts.
-    # Either is sufficient: docker login picks up $NGC_CLI_API_KEY directly.
-    if os.environ.get("NGC_CLI_API_KEY"):
+    # NGC + NVIDIA API keys. Three sources (highest priority first):
+    #   1. $workdir/.creds on the target (v0.4.4+; the canonical store).
+    #   2. Env var on the driving shell — we forward $NGC_CLI_API_KEY /
+    #      $NVIDIA_API_KEY over SSH, so a key set in the local shell
+    #      reaches every bash payload Spectator ssh-execs.
+    #   3. (NGC only) ~/.ngc/api_key on the target — the upstream NGC
+    #      playbook convention; docker login picks this up too.
+    creds_check = _exec(
+        host,
+        f'if [ -f "{workdir}/.creds" ]; then '
+        '  set -a; '
+        f'  . "{workdir}/.creds"; '
+        '  set +a; '
+        '  echo "NGC=${NGC_CLI_API_KEY:+SET}"; '
+        '  echo "NVIDIA=${NVIDIA_API_KEY:+SET}"; '
+        'else '
+        '  echo "NGC="; echo "NVIDIA="; '
+        'fi',
+    )
+    creds_lines = creds_check.stdout.splitlines() if creds_check.ok else []
+    creds_has_ngc = any(line.strip() == "NGC=SET" for line in creds_lines)
+    creds_has_nvidia = any(line.strip() == "NVIDIA=SET" for line in creds_lines)
+
+    if creds_has_ngc:
         out.append(Check(
             "NGC API key",
             True,
-            "$NGC_CLI_API_KEY set in driving shell (forwarded over SSH)",
+            f"in {workdir}/.creds on target (v0.4.4+; sourced by every bash payload)",
+            blocking=False,
+        ))
+    elif os.environ.get("NGC_CLI_API_KEY"):
+        out.append(Check(
+            "NGC API key",
+            True,
+            "$NGC_CLI_API_KEY set in driving shell (forwarded over SSH; "
+            "first install will persist to .creds)",
             blocking=False,
         ))
     else:
@@ -181,25 +221,34 @@ def collect_checks(host: str | None = None) -> list[Check]:
             "NGC API key",
             has_key,
             "~/.ngc/api_key present on target" if has_key
-            else "no ~/.ngc/api_key on target and $NGC_CLI_API_KEY unset locally — "
-                 "`export NGC_CLI_API_KEY=...` (https://org.ngc.nvidia.com/setup/api-keys) and re-run",
+            else "no key found anywhere — set $NGC_CLI_API_KEY locally (forwarded "
+                 "via SSH; first install persists it to $workdir/.creds), or place "
+                 "the key at ~/.ngc/api_key on target. "
+                 "https://org.ngc.nvidia.com/setup/api-keys",
             blocking=False,
         ))
 
-    # NVIDIA API key — required for `spectator up` (remote LLM endpoint auth).
-    # Same dual-source logic.
-    if os.environ.get("NVIDIA_API_KEY"):
+    if creds_has_nvidia:
         out.append(Check(
             "NVIDIA API key",
             True,
-            "$NVIDIA_API_KEY set in driving shell (used by remote LLM auth)",
+            f"in {workdir}/.creds on target (v0.4.4+; used by remote LLM auth)",
+            blocking=False,
+        ))
+    elif os.environ.get("NVIDIA_API_KEY"):
+        out.append(Check(
+            "NVIDIA API key",
+            True,
+            "$NVIDIA_API_KEY set in driving shell (used by remote LLM auth; "
+            "first install will persist to .creds)",
             blocking=False,
         ))
     else:
         out.append(Check(
             "NVIDIA API key",
             False,
-            "$NVIDIA_API_KEY unset — required for `spectator up` (remote LLM auth)",
+            "$NVIDIA_API_KEY unset and not in $workdir/.creds — "
+            "required for `spectator up` (remote LLM auth)",
             blocking=False,
         ))
 

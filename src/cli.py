@@ -166,9 +166,12 @@ Friendly walk-through: [italic]README.md[/italic]. Full reference: [italic]REFER
 def preflight(
     target: Optional[str] = typer.Option(None, "--target", "-t",
         help="SSH host to check (default: localhost)"),
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",
+        help="Spectator $workdir on the target — used to probe $workdir/.creds "
+             "for NGC / NVIDIA keys (v0.4.4+ persistent store)."),
 ):
     """Verify VSS prerequisites (driver / CUDA / docker / nvidia-ctk / NGC)."""
-    checks = preflight_mod.collect_checks(target)
+    checks = preflight_mod.collect_checks(target, workdir=workdir)
     ok = preflight_mod.render(checks, target)
     raise typer.Exit(0 if ok else 1)
 
@@ -193,7 +196,7 @@ def install(
 
     if not skip_preflight:
         console.rule("[bold]preflight[/bold]")
-        checks = preflight_mod.collect_checks(target)
+        checks = preflight_mod.collect_checks(target, workdir=workdir)
         preflight_mod.render(checks, target)
         # don't auto-fail — install can recover some, the user should see the table.
 

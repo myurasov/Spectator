@@ -1,6 +1,6 @@
 [project]
 name = "spectator"
-version = "0.4.4"
+version = "0.4.5"
 description = "Thin CLI wrapper around NVIDIA's Video Search & Summarization (VSS) Blueprint v3.1, with a sibling Whisper audio pipeline. Designed for DGX Spark (GB10), works on any v3.1-supported host."
 readme = "README.md"
 license = { text = "Apache-2.0" }
