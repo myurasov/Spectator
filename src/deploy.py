@@ -93,7 +93,17 @@ def deploy(host: str, cfg: config.StackConfig, *, do_install: bool = True,
         if [ ! -d .venv ]; then
           uv venv --python 3.12 .venv
         fi
-        uv sync
+        # --extra dev so the wrapper's deps_ready() probes (which check
+        # for pytest + ruff alongside the runtime deps) pass on the
+        # remote without an extra `./spectator install` round-trip.
+        uv sync --extra dev
+        # Drop the install stamp the wrapper checks for — without this,
+        # every wrapper invocation on the remote re-enters bootstrap,
+        # which calls require_uv. On a host where uv was deleted after
+        # deploy (or where ~/.local/bin isn't on the non-interactive
+        # SSH PATH), that would die with 'uv is required' even though
+        # .venv is fully populated.
+        touch .venv/.spectator-installed
         echo "==== uv install complete (invoke as 'uv run python -m src') ===="
         ls -la .venv/bin/python
     """)

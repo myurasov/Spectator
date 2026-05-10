@@ -216,6 +216,36 @@ def test_down_script_covers_every_spectator_launched_thing() -> None:
     assert "~/.spectator/bin/sys-cache-cleaner.sh" in script  # workdir interp
 
 
+def test_deploy_remote_uv_sync_includes_dev_and_writes_install_stamp() -> None:
+    """v0.3.9: deploy.py's remote uv-sync over SSH must (a) install dev
+    deps so the wrapper's deps_ready() probe passes on the target, and
+    (b) drop the .venv/.spectator-installed stamp file so the wrapper's
+    fast-path skips require_uv on subsequent invocations.
+
+    Without (a), `./spectator <verb>` on a deployed target fails the
+    pytest/ruff existence checks. Without (b), the wrapper re-enters
+    bootstrap on every invocation, which means `require_uv` runs even
+    when the venv is fully populated — and on a non-interactive SSH
+    session (no ~/.local/bin on PATH) or a host where uv was deleted
+    post-deploy, that path explodes with 'uv is required'.
+
+    Pin both pieces of the rendered SSH script so future edits can't
+    silently regress."""
+    import inspect
+
+    from src import deploy
+
+    src_text = inspect.getsource(deploy.deploy)
+    assert "uv sync --extra dev" in src_text, (
+        "deploy.py's remote uv-sync must use --extra dev so the wrapper's "
+        "deps_ready() check passes on the target."
+    )
+    assert "touch .venv/.spectator-installed" in src_text, (
+        "deploy.py must drop the wrapper's install stamp so the v0.3.8 "
+        "fast-path (skip require_uv when venv is healthy) actually triggers."
+    )
+
+
 def test_wrapper_bootstrap_skips_uv_when_venv_is_healthy(tmp_path) -> None:
     """v0.3.8 regression test for the require-uv-even-when-cached bug.
 
