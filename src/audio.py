@@ -502,11 +502,26 @@ RUNNER_EOF
             tail -10 {log_path} 2>/dev/null
         ''').strip()
     else:
+        # Non-detach branch — synchronous run. END line must match the
+        # detach branch's `==== END rc=$RC <date> ====` shape so the
+        # WebUI's progress parser (`webui/progress.py:_END_RE`) detects
+        # completion uniformly. Pre-v0.3.7 this branch emitted just
+        # `==== END <date> ====` (no `rc=`), and the parser silently
+        # missed the marker → the WS handler fell through to its
+        # "subprocess died without END marker" sentinel and mislabeled
+        # successful local jobs as failed.
+        #
+        # We capture $? rather than relying on `set -e` so a non-zero
+        # exit is reported in the END line (rc=N) instead of skipping
+        # it entirely — same shape as the runner.sh script in the
+        # detach branch.
         wrapper = textwrap.dedent(f'''
-            set -e
             echo "==== START $(date) ===="
+            set -o pipefail
             {cmd}
-            echo "==== END $(date) ===="
+            RC=$?
+            echo "==== END rc=$RC $(date) ===="
+            exit $RC
         ''').strip()
 
     if host:

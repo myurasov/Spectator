@@ -216,6 +216,78 @@ def test_down_script_covers_every_spectator_launched_thing() -> None:
     assert "~/.spectator/bin/sys-cache-cleaner.sh" in script  # workdir interp
 
 
+def test_audio_transcribe_local_wrapper_emits_parseable_end_line(monkeypatch, tmp_path) -> None:
+    """v0.3.7 regression test for the END-marker mismatch.
+
+    The Web UI's WebSocket progress handler at `webui/routes/ws.py:85`
+    falls back to "subprocess died without END marker" when its parser
+    (`webui/progress.py:_END_RE = re.compile(r'==== END rc=(-?\\d+) ')`)
+    can't find a matching END line in the job log. Pre-v0.3.7 the
+    non-detach branch of `audio.transcribe()` emitted
+
+        echo "==== END $(date) ===="
+
+    — no `rc=` token, so the regex didn't match and successful local
+    jobs got mislabeled as failed.
+
+    This test captures the rendered bash payload and asserts that both
+    branches now emit `rc=` in the END line, with the same shape the
+    progress parser expects."""
+    import re
+
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+    from src.webui.progress import _END_RE
+
+    captured: list[tuple[list[str], dict | None]] = []
+
+    def fake_run(args, env=None, **kw):
+        captured.append((list(args), env))
+        return RunResult(rc=0, stdout="", stderr="")
+
+    monkeypatch.setattr(audio_mod, "run", fake_run)
+    monkeypatch.setattr(audio_mod, "_detect_device", lambda *a, **kw: "cpu")
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    audio_local = tmp_path / "input.mp3"
+    audio_local.write_bytes(b"fake mp3 bytes for test")
+
+    cfg = StackConfig(workdir="~/wd")
+    audio_mod.transcribe(audio_local, host=None, cfg=cfg, detach=False, follow=False)
+
+    # The second `run()` call is the wrapper bash payload (the first is
+    # the mkdir setup; we don't care about that one for this test).
+    wrapper_calls = [c for c in captured if c[0][:2] == ["bash", "-c"]]
+    assert len(wrapper_calls) >= 2, (
+        f"expected setup + wrapper bash calls, got: {captured}"
+    )
+    wrapper_script = wrapper_calls[-1][0][2]
+
+    # The END line must include `rc=` so the WS progress parser detects
+    # completion. We don't pin the exact text (the date / rc value vary
+    # at run time), just the regex match.
+    rendered_end = re.search(r'echo "==== END rc=\$RC.*===="', wrapper_script)
+    assert rendered_end is not None, (
+        f"non-detach wrapper must emit '==== END rc=$RC <date> ====' "
+        f"so the WS parser can match it. Got:\n{wrapper_script}"
+    )
+
+    # And: a synthetic log with the rendered shape (rc=0) parses as finished.
+    sample_log = (
+        "==== START Sat May  9 19:02:09 PM PDT 2026 ====\n"
+        "[00:00.000 --> 00:01.000] hello\n"
+        "==== END rc=0 Sat May  9 19:12:04 PM PDT 2026 ====\n"
+    )
+    assert _END_RE.search(sample_log) is not None
+    m = _END_RE.search(sample_log)
+    assert m is not None
+    assert int(m.group(1)) == 0  # rc=0 → success
+
+
 def test_audio_local_copy_resolves_workdir_correctly(tmp_path, monkeypatch) -> None:
     """v0.3.6 regression test for the literal-`$HOME`-directory bug.
 
