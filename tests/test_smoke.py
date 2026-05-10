@@ -161,6 +161,110 @@ def test_detect_device_falls_back_to_cpu_when_probe_fails(monkeypatch) -> None:
     assert audio_mod._detect_device(cfg, host=None) == "cpu"
 
 
+def test_normalize_workdir_for_remote_rewrites_local_home_when_target_set() -> None:
+    """Bug A from the 2026-05-09 final report: when a user types
+    ``--workdir ~/.co-sa/spectator`` (no quotes) on a Mac terminal and
+    passes ``--target <linux-host>``, the local Bash expands the tilde
+    BEFORE Spectator sees it. Spectator stores the absolute Mac path
+    in cfg.workdir and ships it to the Linux remote, which fails with
+    ``mkdir: cannot create directory '/Users': Permission denied``.
+
+    v0.4.7 fix: detect prefixes that match the LOCAL user's home and
+    rewrite to ``$HOME`` when ``target`` is set, so the remote shell
+    expands the path against the REMOTE's home.
+    """
+    import os.path
+
+    from src.config import normalize_workdir_for_remote
+
+    home = os.path.expanduser("~")
+
+    # Tilde-expanded local home + target set → rewrite.
+    rewritten, was_rewritten = normalize_workdir_for_remote(
+        f"{home}/.co-sa/spectator", "spark"
+    )
+    assert was_rewritten is True
+    assert rewritten == "$HOME/.co-sa/spectator"
+
+    # Bare home (no trailing /) + target set → rewrite to bare $HOME.
+    rewritten, was_rewritten = normalize_workdir_for_remote(home, "spark")
+    assert was_rewritten is True
+    assert rewritten == "$HOME"
+
+    # Unrelated absolute path + target set → DO NOT rewrite (might be
+    # intentional, e.g. /opt/spectator on the remote).
+    rewritten, was_rewritten = normalize_workdir_for_remote(
+        "/opt/spectator", "spark"
+    )
+    assert was_rewritten is False
+    assert rewritten == "/opt/spectator"
+
+    # Local-only invocation (no target) → DO NOT rewrite even if path
+    # matches local home. Local target = local Python = `os.path.expanduser`
+    # handles this fine; we don't want to second-guess local invocations.
+    rewritten, was_rewritten = normalize_workdir_for_remote(
+        f"{home}/.co-sa/spectator", None
+    )
+    assert was_rewritten is False
+    assert rewritten == f"{home}/.co-sa/spectator"
+
+    # Tilde-prefixed (user remembered to single-quote) + target → no
+    # rewrite needed; the leading ~ already survives to the remote
+    # shell which handles tilde-expansion correctly.
+    rewritten, was_rewritten = normalize_workdir_for_remote(
+        "~/.spectator", "spark"
+    )
+    assert was_rewritten is False
+    assert rewritten == "~/.spectator"
+
+    # Empty workdir / None → no-op (callers handle the actual default).
+    assert normalize_workdir_for_remote("", "spark") == ("", False)
+    assert normalize_workdir_for_remote(None, "spark") == (None, False)
+
+
+def test_audio_status_find_uses_dash_L_for_symlink_follow() -> None:
+    """Bug E from the 2026-05-09 final report: ``audio status``'s find
+    didn't pass ``-L``, so when ``$workdir/audio-out/`` is a directory
+    symlink (some users point it at a shared outbox), completed
+    transcripts in subdirs of the symlink target weren't listed.
+
+    Pin the ``-L`` flag in the rendered bash so future edits don't
+    regress."""
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_ssh_run(host, script, env=None):
+        captured.append((host, script))
+        return RunResult(rc=0, stdout="", stderr="")
+
+    def fake_run(args, env=None, **kw):
+        # local mode (host=None) goes through `run` instead of ssh_run
+        captured.append(("__local__", args[-1] if args else ""))
+        return RunResult(rc=0, stdout="", stderr="")
+
+    original_ssh = audio_mod.ssh_run
+    original_run = audio_mod.run
+    audio_mod.ssh_run = fake_ssh_run
+    audio_mod.run = fake_run
+    try:
+        cfg = StackConfig(workdir="~/.spectator")
+        audio_mod.status("myspark1-local", cfg)
+    finally:
+        audio_mod.ssh_run = original_ssh
+        audio_mod.run = original_run
+
+    assert len(captured) == 1
+    _, script = captured[0]
+    assert "find -L " in script, (
+        f"audio status's find must use -L to follow symlinks; got:\n{script}"
+    )
+    # And the path is still substituted correctly.
+    assert "$HOME/.spectator/audio-out" in script
+
+
 def test_creds_source_block_renders_bash_with_workdir() -> None:
     """v0.4.4: source_block produces a bash one-liner that sources
     `$workdir/.creds` if it exists, with set -a/+a so unexported

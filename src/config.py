@@ -54,6 +54,51 @@ REQUIRED_DOCKER = "27.2.0"
 REQUIRED_COMPOSE = "v2.29.0"
 
 
+def normalize_workdir_for_remote(
+    workdir: str, target: str | None
+) -> tuple[str, bool]:
+    """Defensive against the local-shell tilde-expansion footgun.
+
+    When a user types ``--workdir ~/.spectator`` (no quotes) on a Mac
+    terminal and passes ``--target <linux-host>``, the local Bash
+    expands ``~/.spectator`` to ``/Users/<mac-user>/.spectator`` BEFORE
+    Spectator sees it. That absolute Mac path then gets shipped to a
+    Linux remote, which fails with::
+
+        mkdir: cannot create directory '/Users': Permission denied
+
+    Same hazard in the reverse direction (Linux user driving a Mac
+    target) and on any cross-host setup where ``~`` resolves
+    differently between caller and callee.
+
+    Fix: when ``target`` is set AND ``workdir`` starts with the local
+    user's actual home directory, rewrite the prefix back to ``$HOME``
+    so the REMOTE shell expands it (to the remote's home, not ours).
+
+    The rewrite is benign when local and remote homes happen to match
+    (e.g. same username, same path layout) — ``$HOME`` and the
+    explicit prefix both resolve to the same string. It strictly
+    improves behavior on every cross-platform invocation.
+
+    Returns (rewritten, was_rewritten) so the caller can emit a
+    one-line heads-up. Returns (workdir, False) when no rewrite
+    happened — including when ``target`` is None (we don't second-
+    guess local-only invocations) and when the prefix doesn't match
+    the local home (the user might genuinely mean ``/opt/spectator``
+    on the remote).
+    """
+    if not target or not workdir:
+        return workdir, False
+    import os.path
+
+    home = os.path.expanduser("~")
+    if workdir == home:
+        return "$HOME", True
+    if workdir.startswith(home + "/"):
+        return "$HOME/" + workdir[len(home) + 1 :], True
+    return workdir, False
+
+
 @dataclass(slots=True)
 class StackConfig:
     """Resolved deployment configuration for one VSS bring-up.

@@ -637,7 +637,11 @@ def status(host: str | None, cfg: config.StackConfig) -> RunResult:
         done 2>/dev/null
         echo
         echo "==== completed transcripts in {_out_dir(cfg)} ===="
-        find {_out_dir(cfg)} -mindepth 1 -maxdepth 2 -name "*.txt" 2>/dev/null | head -20
+        # find -L follows symlinks during traversal so audio-out/ being a
+        # directory symlink (not Spectator's default but a layout some users
+        # adopt to point audio-out/ at, e.g., a shared outbox) doesn't hide
+        # completed transcripts. Bug E in the 2026-05-09 final report.
+        find -L {_out_dir(cfg)} -mindepth 1 -maxdepth 2 -name "*.txt" 2>/dev/null | head -20
     ''').strip()
     if host:
         return ssh_run(host, script)

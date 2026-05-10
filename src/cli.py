@@ -58,6 +58,32 @@ console = Console()
 # helpers
 # ---------------------------------------------------------------------------
 
+def _normalize_workdir(workdir: str | None, target: str | None) -> str | None:
+    """Apply :func:`config.normalize_workdir_for_remote` and emit a
+    one-line heads-up to the console if a rewrite happened.
+
+    Verbs that take both ``--target`` and ``--workdir`` should call
+    this on their workdir argument BEFORE building cfg, so the
+    StackConfig that flows through the rest of the call uses a
+    remote-friendly path even if the local Bash already expanded a
+    leading ``~``.
+    """
+    if workdir is None:
+        return workdir
+    rewritten, was_rewritten = config.normalize_workdir_for_remote(workdir, target)
+    if was_rewritten:
+        console.print(
+            f"[yellow]heads-up:[/yellow] --workdir [italic]{workdir}[/italic] "
+            f"looks like your LOCAL home ($HOME on this machine), but "
+            f"--target [bold]{target}[/bold] is set. Rewriting to "
+            f"[italic]{rewritten}[/italic] so the remote shell expands "
+            f"it to the remote's $HOME. Quote your tilde "
+            f"([italic]--workdir '~/...'[/italic] with single quotes) "
+            f"to avoid this round-trip."
+        )
+    return rewritten
+
+
 def _resolve_cfg(
     workdir: str | None,
     profile: str | None,
@@ -171,6 +197,7 @@ def preflight(
              "for NGC / NVIDIA keys (v0.4.4+ persistent store)."),
 ):
     """Verify VSS prerequisites (driver / CUDA / docker / nvidia-ctk / NGC)."""
+    workdir = _normalize_workdir(workdir, target)
     checks = preflight_mod.collect_checks(target, workdir=workdir)
     ok = preflight_mod.render(checks, target)
     raise typer.Exit(0 if ok else 1)
@@ -192,10 +219,14 @@ def install(
     skip_preflight: bool = typer.Option(False, "--skip-preflight"),
 ):
     """Install the VSS Blueprint (default: user-space only; --apply-system for global mutations)."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, ngc_key, None)
 
     if not skip_preflight:
         console.rule("[bold]preflight[/bold]")
+        # `workdir` is already normalized for `_resolve_cfg(workdir, ...)` above;
+        # pass the same value through to collect_checks so the .creds probe
+        # targets the remote-friendly path.
         checks = preflight_mod.collect_checks(target, workdir=workdir)
         preflight_mod.render(checks, target)
         # don't auto-fail — install can recover some, the user should see the table.
@@ -246,6 +277,7 @@ def uninstall(
     Use `down` instead if you just want to stop the stack and keep
     $workdir on disk for later bring-up.
     """
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
 
     where = f"on [bold]{target}[/bold]" if target else "[bold]locally[/bold]"
@@ -277,6 +309,7 @@ def deploy(
         help="Just rsync + uv sync, skip the install step."),
 ):
     """Full sync: rsync source + remote uv sync + remote install."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, ngc_key, None)
     r = deploy_mod.deploy(target, cfg, do_install=not no_install)
     raise typer.Exit(0 if r.ok else 1)
@@ -293,6 +326,7 @@ def rsync(
     the uv-sync round-trip. If you added/changed dependencies, use
     `spectator deploy` instead.
     """
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = deploy_mod.rsync_only(target, cfg)
     raise typer.Exit(0 if r.ok else 1)
@@ -313,6 +347,7 @@ def up_cmd(
     nvidia_key: Optional[str] = typer.Option(None, "--nvidia-key", envvar="NVIDIA_API_KEY"),
 ):
     """Bring the VSS stack up (in tmux, so it survives ssh disconnect)."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, profile, hardware, remote_llm, llm_endpoint, ngc_key, nvidia_key)
     r = stack_mod.up(cfg, host=target)
     console.print(r.stdout)
@@ -327,6 +362,7 @@ def down(
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Stop the VSS stack."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = stack_mod.down(cfg, host=target)
     console.print(r.stdout)
@@ -339,6 +375,7 @@ def status(
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Show stack health (tmux, docker compose ps, UI port, GPU)."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = stack_mod.status(cfg, host=target)
     console.print(r.stdout)
@@ -354,6 +391,7 @@ def logs(
     lines: int = typer.Option(200, "--lines", "-n"),
 ):
     """Tail the bring-up log (or a specific docker service)."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = stack_mod.logs(cfg, host=target, service=service, follow=follow, lines=lines)
     console.print(r.stdout)
@@ -453,6 +491,7 @@ def cache_cleaner_start(
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Start the user-local sys-cache-cleaner.sh in the background (sudo -b)."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = install_mod.start_cache_cleaner(target, cfg)
     console.print(r.stdout)
@@ -481,6 +520,7 @@ def audio_install(
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Set up the audio-venv (whisper + torch) at $workdir/audio-venv/. Idempotent."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = audio_mod.install_audio_venv(target, cfg)
     console.print(r.stdout)
@@ -536,6 +576,7 @@ def audio_transcribe(
              "if cuda is not actually available."),
 ):
     """Transcribe an audio file (uploads to target, runs whisper in tmux)."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     if task not in ("transcribe", "translate"):
         console.print(f"[red]--task must be 'transcribe' or 'translate' (got {task!r})[/red]")
@@ -564,6 +605,7 @@ def audio_status(
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """List running whisper jobs + completed transcripts."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = audio_mod.status(target, cfg)
     console.print(r.stdout)
@@ -579,6 +621,7 @@ def audio_fetch(
         help="Only fetch one transcript subdirectory (e.g. the audio's stem name)."),
 ):
     """rsync $workdir/audio-out/ back into a local directory."""
+    workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     r = audio_mod.fetch(target, cfg, output, only=only)
     console.print(r.stdout)
