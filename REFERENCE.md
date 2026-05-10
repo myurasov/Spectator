@@ -492,7 +492,9 @@ Performance expectations (orientation only, model = `large-v3-turbo`):
 
 ### MPS limitation (Apple Silicon)
 
-`openai-whisper` × `torch ≥ 2.x` currently crashes on Apple Silicon GPU for the entire `large-v3` model family. Symptom on `--device mps`:
+**Bottom line**: as of `openai-whisper 20250625` × `torch 2.11`, MPS is **not a usable option for any Whisper model Spectator could meaningfully ship**. CPU is the only working local path on Apple Silicon. For real GPU acceleration, send work to a CUDA target via `--target <gpu-machine>`.
+
+**`large-v3` family crash**:
 
 ```
 TypeError: Cannot convert a MPS Tensor to float64 dtype as the MPS framework
@@ -501,14 +503,29 @@ doesn't support float64. Please use float32 instead.
 
 All four of Spectator's quality presets (`studio` / `meeting` / `phone` / `extreme`) use `large-v3` or `large-v3-turbo`, so this affects every transcribe invocation that lands on MPS via auto-detect. Tracked upstream: [openai/whisper#2151](https://github.com/openai/whisper/issues/2151).
 
-**v0.4.1 mitigation**: auto-detect skips MPS by default and prefers CPU on Apple Silicon, with a one-line warning explaining the downgrade. Real-world impact: `~real-time to 2× slower` instead of `2-4× faster than real-time` for a `meeting`-quality 30-min recording on an M-series Mac. Still tractable for occasional use; definitely send heavy jobs to a CUDA target via `--target <gpu-machine>`.
+**Tried-and-doesn't-work table** (M-series Mac, `openai-whisper 20250625`, `torch 2.11.0`, tested 2026-05-09):
 
-To bypass the auto-skip:
+| `--model`         | MPS behavior |
+|---|---|
+| `base`            | Different crash: `-inf logits` saturate the categorical distribution |
+| `small`           | `float64` crash on first decode block |
+| `medium` (≤ 30 s) | "Succeeds" with rc=0 but **silently writes empty transcripts** — only the `[00:00.000 --> 00:30.000]` timestamp header, no segments |
+| `medium` (full)   | `float64` crash partway through |
+| `large-v3-turbo`  | `float64` crash on first decode block |
+| `large-v3`        | `float64` crash (same as `large-v3-turbo`) |
 
-- **Per-invocation**: `--device mps` is always honored (the user is asking for it explicitly; if you have a smaller model that's known to work, fine).
-- **Globally**: set `SPECTATOR_ALLOW_MPS_AUTO=1` in your shell. Then auto-detect goes back to `cuda > mps > cpu`. Useful if you've patched whisper locally or upstream has landed a fix and you're testing.
+So no `--model` override + `--device mps` produces a usable transcript on the current upstream stack.
 
-When upstream lands a fix, Spectator will revisit the default — likely flipping back to including MPS in the auto-detect order.
+**v0.4.1 mitigation**: auto-detect skips MPS by default and prefers CPU on Apple Silicon, with a one-line warning explaining the downgrade.
+
+Real-world impact: `~real-time` on Apple Silicon CPU for a `meeting`-quality 30-min recording on an M-series Mac. Tractable for occasional use; for anything > 30 min, the CUDA target is dramatically faster (~10-30×).
+
+**Override knobs (won't actually help, but documented for completeness)**:
+
+- **Per-invocation**: `--device mps` is always honored; expect a crash or empty output.
+- **Globally**: set `SPECTATOR_ALLOW_MPS_AUTO=1` in your shell to re-include MPS in the auto-detect order.
+
+When upstream lands a fix in `openai/whisper`, this section gets updated and the auto-detect default likely flips back to `cuda > mps > cpu`.
 
 ## Audio language handling
 

@@ -237,7 +237,7 @@ Rough performance on a 1-hour `meeting`-quality recording:
 | Intel Mac via CPU | 5-15× slower than real-time |
 | NVIDIA GPU via CUDA | 10-30× faster than real-time |
 
-**Why MPS isn't the auto-detect default**: `openai-whisper` × `torch ≥ 2.x` crashes on Apple Silicon GPU for the `large-v3` family that all of Spectator's quality presets use ("Cannot convert a MPS Tensor to float64"). Tracked upstream as [openai/whisper#2151](https://github.com/openai/whisper/issues/2151). v0.4.1's auto-detect skips MPS and falls back to CPU with a one-line warning. Override per-invocation with `--device mps`, or globally with `SPECTATOR_ALLOW_MPS_AUTO=1`. See [REFERENCE.md → MPS limitation](REFERENCE.md#mps-limitation-apple-silicon) for the full story.
+**Why MPS isn't the auto-detect default**: `openai-whisper` × `torch ≥ 2.x` is currently broken on Apple Silicon GPU for **every Whisper model** Spectator could ship. `large-v3` / `large-v3-turbo` (Spectator's preset models) crash with "Cannot convert a MPS Tensor to float64"; `small` does the same; `base` hits a different `-inf logits` failure; `medium` exits zero but writes an empty transcript. Tracked upstream as [openai/whisper#2151](https://github.com/openai/whisper/issues/2151). v0.4.1's auto-detect skips MPS and falls back to CPU. The override knobs (`--device mps`, `SPECTATOR_ALLOW_MPS_AUTO=1`) are still there, but they currently produce crashes or empty output regardless of `--model`. See [REFERENCE.md → MPS limitation](REFERENCE.md#mps-limitation-apple-silicon) for the full per-model breakdown. **CPU on Apple Silicon works fine** (~real-time for `meeting`-quality recordings); **CUDA via `--target <gpu-machine>` is dramatically faster** (10-30×) for anything heavier.
 
 ### Summarize a video
 
