@@ -69,6 +69,34 @@ def test_version_attribute_present() -> None:
     assert src.__version__.count(".") >= 1
 
 
+def test_default_remote_workdir_is_dotted() -> None:
+    """v0.3.0 moved the default $workdir to a dot-prefixed hidden dir
+    (`~/.spectator-workdir`) so the project's on-disk state stays out of
+    the user's `ls ~` view by default. Pin the value so any future
+    refactor that flips it back surfaces immediately."""
+    from src import config
+
+    assert config.DEFAULT_REMOTE_WORKDIR == "~/.spectator-workdir"
+
+
+def test_tool_tree_relpath_is_capitalized() -> None:
+    """The rsynced project tree on the target is `$workdir/Spectator/`
+    (capitalized — represents the project name as humans see it browsing
+    `ls $workdir/`). Pin to catch silent renames."""
+    from src import config
+
+    assert config.TOOL_TREE_RELPATH == "Spectator"
+
+
+def test_remote_tool_dir_uses_capitalized_relpath() -> None:
+    """Belt-and-suspenders: deploy._remote_tool_dir() must read from
+    config.TOOL_TREE_RELPATH (single source of truth) and not hardcode."""
+    from src import config, deploy
+
+    cfg = config.StackConfig(workdir="/tmp/wd")
+    assert deploy._remote_tool_dir(cfg) == "/tmp/wd/Spectator"
+
+
 def test_whisper_command_emits_fp16_only_on_cuda() -> None:
     """`--fp16 True` is only safe on CUDA; MPS has known fp16 quality
     regressions in openai-whisper, and CPU doesn't support fp16 at all."""

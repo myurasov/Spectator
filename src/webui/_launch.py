@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import os
 
+from .. import config
 from .server import create_app
 
-_workdir = os.environ.get("SPECTATOR_UI_WORKDIR") or "~/spectator"
+_workdir = os.environ.get("SPECTATOR_UI_WORKDIR") or config.DEFAULT_REMOTE_WORKDIR
 _target_raw = os.environ.get("SPECTATOR_UI_TARGET", "")
 _target: str | None = _target_raw if _target_raw else None
 

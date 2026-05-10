@@ -16,7 +16,7 @@ from dataclasses import dataclass
 VSS_REPO_URL = "https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization.git"
 VSS_VERSION = "v3.1.0"
 
-DEFAULT_REMOTE_WORKDIR = "~/spectator"
+DEFAULT_REMOTE_WORKDIR = "~/.spectator-workdir"
 DEFAULT_VSS_CHECKOUT = "video-search-and-summarization"
 
 DEFAULT_HARDWARE_PROFILE = "DGX-SPARK"
@@ -35,6 +35,12 @@ DEFAULT_LLM_ENDPOINT = "https://integrate.api.nvidia.com/v1"
 UI_PORT = 3030
 AGENT_API_PORT = 8000
 PROXY_PORT = 7777
+
+# Name of the rsynced project tree on the target, under $workdir. Capitalized
+# to match the project name visible to humans browsing $workdir on the host.
+# Single source of truth: deploy.py and any doc that hard-codes a path under
+# $workdir reads from here.
+TOOL_TREE_RELPATH = "Spectator"
 
 # User-local cache cleaner path (vs. the playbook's /usr/local/bin/ which would
 # need sudo to write). The script itself still needs sudo at runtime because it

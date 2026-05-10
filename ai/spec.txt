@@ -2,7 +2,7 @@
 Spectator — specification (canonical reference for AI dev agents)
 ================================================================================
 
-Version: 0.2.0
+Version: 0.3.0
 Status:  alpha
 License: Apache 2.0
 Source:  https://github.com/myurasov/Spectator
@@ -204,16 +204,16 @@ DATA FLOW (full bring-up + use)
   1. `./spectator install` (local) — uv sync builds the project venv
      with the four runtime deps + dev extras.
   2. `./spectator deploy --target HOST` — rsync the project tree to
-     `~/spectator/spectator-tool/` on HOST (excluding .venv, .git,
-     caches, lockfile, secrets), run `uv sync` over SSH, then run
-     `python -m src install --workdir ~/spectator [--ngc-key ...]`.
+     `~/.spectator-workdir/Spectator/` on HOST (excluding .venv,
+     .git, caches, lockfile, secrets), run `uv sync` over SSH, then run
+     `python -m src install --workdir ~/.spectator-workdir [--ngc-key ...]`.
      The default install: clones the VSS repo into
-     `~/spectator/video-search-and-summarization/`, patches the agent
-     UI port (3000 -> 3030), writes the user-local cache cleaner to
-     `~/spectator/bin/sys-cache-cleaner.sh`, and `docker login nvcr.io`
-     with the NGC key. **Nothing outside ~/spectator/ and
-     ~/.docker/config.json is touched** unless `--apply-system` was
-     passed.
+     `~/.spectator-workdir/video-search-and-summarization/`, patches the
+     agent UI port (3000 -> 3030), writes the user-local cache cleaner
+     to `~/.spectator-workdir/bin/sys-cache-cleaner.sh`, and `docker
+     login nvcr.io` with the NGC key. **Nothing outside
+     ~/.spectator-workdir/ and ~/.docker/config.json is touched** unless
+     `--apply-system` was passed.
   3. `./spectator preflight --target HOST` (recommended) — read-only
      checks: driver version, CUDA, docker, docker compose, docker
      group membership, nvidia-ctk install + runtime registration,
@@ -222,8 +222,8 @@ DATA FLOW (full bring-up + use)
      `spectator-up` on the target, runs
      `scripts/dev-profile.sh up -p base -H DGX-SPARK --use-remote-llm
      --llm nvidia/nvidia-nemotron-nano-9b-v2 2>&1 | tee
-     ~/spectator/logs/up.log`. First run pulls ~30 GB of images and
-     takes 30-45 min; subsequent runs reuse the cache.
+     ~/.spectator-workdir/logs/up.log`. First run pulls ~30 GB of images
+     and takes 30-45 min; subsequent runs reuse the cache.
   5. `./spectator process VIDEO --target HOST [--prompt ...]` —
      uploads a video file to the running Agent (POST /files), then
      calls /summarize, polls /jobs/<id> until succeeded/failed.
@@ -243,8 +243,8 @@ DATA FLOW (full bring-up + use)
      keeps running). Output lands at `$workdir/audio-out/<stem>/`.
 
 ON THE TARGET (created by spectator install / audio install / up):
-  ~/spectator/                              # $workdir
-  ├── spectator-tool/                       # rsynced project tree
+  ~/.spectator-workdir/                     # $workdir
+  ├── Spectator/                            # rsynced project tree
   │   ├── .venv/                            # uv-managed
   │   ├── pyproject.toml
   │   ├── src/, tests/, ...
@@ -268,7 +268,7 @@ ON THE TARGET (created by spectator install / audio install / up):
 --------------------------------------------------------------------------------
 
 Default install (no --apply-system) writes ONLY:
-  * `~/spectator/...` (configurable via --workdir)
+  * `~/.spectator-workdir/...` (configurable via --workdir)
   * `~/.docker/config.json` (NGC docker login — user-level, not
     system-wide)
 
@@ -279,8 +279,9 @@ System mutations (--apply-system, all sudo-prompted on the target):
 
 Cache cleaner is sudo-launched separately (`./spectator system
 cache-cleaner-start`), but the script file lives at
-`~/spectator/bin/sys-cache-cleaner.sh` — not in `/usr/local/bin/`,
-deliberately, so the script itself doesn't pollute system bin paths.
+`~/.spectator-workdir/bin/sys-cache-cleaner.sh` — not in
+`/usr/local/bin/`, deliberately, so the script itself doesn't pollute
+system bin paths.
 
 This is one of the project's load-bearing properties. Any new code
 that touches system state outside `--apply-system` is a bug. Any new
@@ -346,7 +347,7 @@ ui-server sub-app (persistent web UI, v0.2.0+):
 GLOBAL CONTRACTS
   * `--target HOST` is an SSH alias. Without it, the command runs
     locally. SAME flag name, SAME semantics, on every command.
-  * `--workdir` defaults to `~/spectator`. Not currently relocatable
+  * `--workdir` defaults to `~/.spectator-workdir`. Not currently relocatable
     to a path with shell metacharacters (no spaces in the basename
     yet). Edge-case-test target.
   * Adding a new top-level command or sub-app is a contract change —

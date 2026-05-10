@@ -4,7 +4,7 @@
 """Deploy: rsync this tool to a remote host, then run install over SSH.
 
 Used as `spectator deploy --target <gpu-machine>`. The remote copy of
-Spectator (in $workdir/spectator-tool/) becomes self-sufficient: from
+Spectator (in $workdir/Spectator/) becomes self-sufficient: from
 that point the user can ssh in and run `spectator …` directly on the
 Spark.
 
@@ -36,7 +36,7 @@ _RSYNC_EXCLUDES = [
 
 
 def _remote_tool_dir(cfg: config.StackConfig) -> str:
-    return f"{cfg.workdir}/spectator-tool"
+    return f"{cfg.workdir}/{config.TOOL_TREE_RELPATH}"
 
 
 def rsync_only(host: str, cfg: config.StackConfig, *,
@@ -45,7 +45,7 @@ def rsync_only(host: str, cfg: config.StackConfig, *,
 
     Use during iterative development — push edits to the remote tool
     without paying the uv-sync round-trip. The remote venv at
-    $workdir/spectator-tool/.venv/ is untouched, so subsequent
+    $workdir/Spectator/.venv/ is untouched, so subsequent
     `./spectator …` calls on the remote still work as long as no new
     deps were added (otherwise run a full `spectator deploy`).
     """

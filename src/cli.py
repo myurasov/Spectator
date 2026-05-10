@@ -154,7 +154,7 @@ directly. Spectator is invoked as a Python module, not a console script.
   [bold]system[/bold]      cache-cleaner-start / cache-cleaner-stop  (sudo)
 
 [bold]Containment[/bold]: Spectator only writes to its own [italic].venv/[/italic], to [italic]$workdir[/italic] on
-the target (default [italic]~/spectator/[/italic]), and to [italic]~/.docker/config.json[/italic] (NGC login).
+the target (default [italic]~/.spectator-workdir/[/italic]), and to [italic]~/.docker/config.json[/italic] (NGC login).
 System mutations are gated behind [italic]--apply-system[/italic].
 
 Friendly walk-through: [italic]README.md[/italic]. Full reference: [italic]REFERENCE.md[/italic].

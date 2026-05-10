@@ -28,6 +28,10 @@ def _vss_dir(cfg: config.StackConfig) -> str:
     return f"{cfg.workdir}/{cfg.vss_checkout}"
 
 
+def _logs_dir(cfg: config.StackConfig) -> str:
+    return f"{cfg.workdir}/logs"
+
+
 def _exec(host: str | None, script: str,
           env: dict[str, str] | None = None) -> RunResult:
     if host:
@@ -46,8 +50,8 @@ def up(cfg: config.StackConfig, host: str | None = None,
     )
     script = textwrap.dedent(f'''
         cd {_vss_dir(cfg)}
-        mkdir -p $HOME/spectator/logs
-        > $HOME/spectator/logs/up.log
+        mkdir -p {_logs_dir(cfg)}
+        > {_logs_dir(cfg)}/up.log
         if tmux has-session -t {tmux_session} 2>/dev/null; then
           tmux kill-session -t {tmux_session}
         fi
@@ -56,13 +60,13 @@ def up(cfg: config.StackConfig, host: str | None = None,
            export NGC_CLI_API_KEY='${{NGC_CLI_API_KEY:-}}' && \\
            export LLM_ENDPOINT_URL='${{LLM_ENDPOINT_URL:-{config.DEFAULT_LLM_ENDPOINT}}}' && \\
            export NVIDIA_API_KEY='${{NVIDIA_API_KEY:-}}' && \\
-           scripts/dev-profile.sh up {flags} 2>&1 | tee $HOME/spectator/logs/up.log"
+           scripts/dev-profile.sh up {flags} 2>&1 | tee {_logs_dir(cfg)}/up.log"
         sleep 2
         echo "==== tmux ===="
         tmux ls
         echo
         echo "==== first lines of up.log ===="
-        head -20 $HOME/spectator/logs/up.log 2>/dev/null
+        head -20 {_logs_dir(cfg)}/up.log 2>/dev/null
         echo
         echo "Tail with:  spectator logs --follow"
     ''').strip()
@@ -104,7 +108,7 @@ def logs(cfg: config.StackConfig, host: str | None = None,
     if service:
         body = f"docker logs {'--follow ' if follow else ''}--tail {lines} {service}"
     else:
-        body = f"tail {'-f ' if follow else ''}-n {lines} $HOME/spectator/logs/up.log 2>/dev/null"
+        body = f"tail {'-f ' if follow else ''}-n {lines} {_logs_dir(cfg)}/up.log 2>/dev/null"
     script = textwrap.dedent(f'''
         cd {_vss_dir(cfg)}
         {body}
