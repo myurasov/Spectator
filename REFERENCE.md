@@ -432,6 +432,24 @@ All commands accept `--target HOST` (an SSH alias). Without `--target`, the comm
 
 Spectator never reads outside its own folder; it only sees the env vars.
 
+### Persistent creds at `$workdir/.creds`
+
+As of v0.4.4, the first `spectator install` writes `$workdir/.creds` (chmod 600) capturing whatever Spectator-managed env vars are set in the install shell. Subsequent bash payloads (install / audio install / up) source that file at the top, so the values in it become authoritative — they override anything passed via `--ngc-key`, `--nvidia-key`, `LLM_ENDPOINT_URL`, or shell exports.
+
+Read priority (highest first):
+
+1. `$workdir/.creds` — sourced by every bash payload that needs creds.
+2. SSH-propagated env / process env — what the user passed via flags or shell.
+3. None — caller errors if a required value is empty.
+
+Format: shell-source-able (`export VAR=VALUE`, one per line, value quoted via `printf %q`).
+
+Rotating keys: edit `.creds` directly. Spectator never overwrites an existing `.creds`; the file is yours after the first install.
+
+Removing the file: `spectator uninstall` removes `$workdir/` (which includes `.creds`). Manual `rm $workdir/.creds` is also fine — the next install will recreate it from current env vars.
+
+`.creds` is excluded from `rsync` and packaging — it never travels off the host it was written on. (`creds.txt`, `.creds`, and `*.creds` are all in the rsync exclude list in `deploy.py`.)
+
 ## Hardware profiles
 
 `spectator up --hardware DGX-SPARK` is the default. Other v3.1 profiles:

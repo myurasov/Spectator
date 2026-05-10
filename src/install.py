@@ -36,10 +36,20 @@ import textwrap
 
 from rich.console import Console
 
-from . import config, stack
+from . import _creds, config, stack
 from ._run import RunResult, run, ssh_run
 
 console = Console()
+
+
+def _bash_workdir(workdir: str) -> str:
+    """Translate ``~/...`` into ``$HOME/...`` for bash double-quote
+    contexts (the same convention `audio._expand_tilde` uses)."""
+    if workdir.startswith("~/"):
+        return "$HOME/" + workdir[2:]
+    if workdir == "~":
+        return "$HOME"
+    return workdir
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +59,15 @@ console = Console()
 def _user_install_script(workdir: str, vss_checkout: str,
                          ngc_api_key: str | None) -> str:
     """Default install — user-space only, no sudo, no global writes."""
+    workdir_bash = _bash_workdir(workdir)
     return textwrap.dedent(f'''
-        # ---- 1. workdir + repo clone (idempotent) ----
+        # ---- 0. workdir + creds ----
         mkdir -p "{workdir}"
+        # Source $workdir/.creds if it exists. Values in .creds override
+        # SSH-propagated env vars (priority order per v0.4.4 spec). After
+        # this line, NGC_CLI_API_KEY / NVIDIA_API_KEY / LLM_ENDPOINT_URL
+        # reflect what should actually be used.
+        {_creds.source_block(workdir_bash)}
         cd "{workdir}"
 
         if [ -d "{vss_checkout}/.git" ]; then
@@ -163,7 +179,15 @@ CC_EOF
           echo "    pass --ngc-key or export NGC_CLI_API_KEY before 'spectator up'"
         fi
 
-        # ---- 4. summary ----
+        # ---- 4. persist creds to $workdir/.creds (first install only) ----
+        # If this is a fresh install AND we have keys in env, write them
+        # to $workdir/.creds so subsequent invocations don't depend on the
+        # SSH env / shell exports being present. The file is the source of
+        # truth from now on (sourced at the top of every bash payload that
+        # needs creds — see _creds.source_block).
+        {_creds.save_block(workdir_bash)}
+
+        # ---- 5. summary ----
         echo
         echo "==== User-space install complete ===="
         echo "  VSS checkout : {workdir}/{vss_checkout}"

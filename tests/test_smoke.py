@@ -161,6 +161,176 @@ def test_detect_device_falls_back_to_cpu_when_probe_fails(monkeypatch) -> None:
     assert audio_mod._detect_device(cfg, host=None) == "cpu"
 
 
+def test_creds_source_block_renders_bash_with_workdir() -> None:
+    """v0.4.4: source_block produces a bash one-liner that sources
+    `$workdir/.creds` if it exists, with set -a/+a so unexported
+    `VAR=VALUE` lines still get exported (defensive for hand-edited
+    .creds files)."""
+    from src import _creds
+
+    block = _creds.source_block("$HOME/.spectator")
+
+    assert "$HOME/.spectator/.creds" in block
+    assert "set -a" in block
+    assert "set +a" in block
+    # ". <path>" is the POSIX `source` (more portable than `source ...`).
+    assert '. "$HOME/.spectator/.creds"' in block
+    # The whole block should be a single line so it can sit at the top
+    # of any heredoc without disrupting indentation.
+    assert "\n" not in block
+
+    # Sanity: actually parses as bash (no `bash -n` available cross-
+    # platform here, so we just check it doesn't have unbalanced quotes).
+    assert block.count('"') % 2 == 0
+
+
+def test_creds_save_block_writes_file_only_when_absent(tmp_path) -> None:
+    """v0.4.4: save_block produces bash that writes $workdir/.creds
+    only if the file doesn't exist, captures NGC_CLI_API_KEY /
+    NVIDIA_API_KEY / LLM_ENDPOINT_URL via printf %q (shell-safe), and
+    chmod 600's the result.
+
+    Run the rendered bash against a tmp fake-workdir and confirm: file
+    is created, has 0600 perms, and contains export lines for any vars
+    that were set in env."""
+    import os
+    import subprocess
+
+    from src import _creds
+
+    fake_wd = tmp_path / "wd"
+    fake_wd.mkdir()
+    block = _creds.save_block(str(fake_wd))
+
+    # Run the block with a minimal env containing test creds.
+    env = {
+        **os.environ,
+        "NGC_CLI_API_KEY": "nvapi-test-ngc",
+        "NVIDIA_API_KEY": "nvapi-test-nvidia",
+        # LLM_ENDPOINT_URL deliberately unset to exercise the
+        # "skip-empty-vars" branch.
+    }
+    env.pop("LLM_ENDPOINT_URL", None)
+
+    r = subprocess.run(
+        ["bash", "-c", block],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert r.returncode == 0, f"save_block bash failed: {r.stderr}"
+
+    creds_file = fake_wd / ".creds"
+    assert creds_file.is_file()
+    # 0600 permissions
+    mode = creds_file.stat().st_mode & 0o777
+    assert mode == 0o600, f"expected mode 0600, got {oct(mode)}"
+
+    contents = creds_file.read_text()
+    assert "export NGC_CLI_API_KEY=nvapi-test-ngc" in contents
+    assert "export NVIDIA_API_KEY=nvapi-test-nvidia" in contents
+    # Unset var should NOT show up.
+    assert "LLM_ENDPOINT_URL" not in contents
+
+    # Re-running the block must NOT clobber the file (idempotent).
+    creds_file.write_text("# user-edited; should be preserved\n")
+    r = subprocess.run(
+        ["bash", "-c", block],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert r.returncode == 0
+    assert creds_file.read_text() == "# user-edited; should be preserved\n"
+
+
+def test_creds_round_trip_source_overrides_env() -> None:
+    """End-to-end priority: source_block overrides whatever was in env
+    before sourcing, because `set -a` + `.` re-exports the .creds
+    values. Spec is "creds is the source of truth once it exists" —
+    pin that the override actually happens.
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    from src import _creds
+
+    with tempfile.TemporaryDirectory() as tmp:
+        creds_file = os.path.join(tmp, ".creds")
+        with open(creds_file, "w") as fh:
+            fh.write("export NGC_CLI_API_KEY=from-creds\n")
+            fh.write("export NVIDIA_API_KEY=from-creds\n")
+
+        block = _creds.source_block(tmp)
+        # Bash that runs source_block and then echoes the resulting
+        # env vars. Pre-set the env vars to "from-shell" so we can
+        # confirm the source overrides them.
+        bash = (
+            'export NGC_CLI_API_KEY=from-shell\n'
+            'export NVIDIA_API_KEY=from-shell\n'
+            f'{block}\n'
+            'echo "NGC=$NGC_CLI_API_KEY"\n'
+            'echo "NVIDIA=$NVIDIA_API_KEY"\n'
+        )
+
+        r = subprocess.run(["bash", "-c", bash], capture_output=True, text=True, timeout=5)
+        assert r.returncode == 0, f"bash failed: {r.stderr}"
+        assert "NGC=from-creds" in r.stdout, (
+            f".creds should override env-set NGC_CLI_API_KEY; got:\n{r.stdout}"
+        )
+        assert "NVIDIA=from-creds" in r.stdout
+
+
+def test_install_script_includes_creds_source_and_save_blocks() -> None:
+    """v0.4.4 plumbing pin: the rendered install bash payload sources
+    .creds at the top and writes it at the end (after the NGC docker
+    login step). Both pieces must be present so first-install creds
+    capture works AND subsequent installs respect existing .creds."""
+    from src.install import _user_install_script
+
+    script = _user_install_script(
+        workdir="~/.spectator",
+        vss_checkout="video-search-and-summarization",
+        ngc_api_key=None,
+    )
+
+    # source_block: bash that sources .creds before any other work.
+    assert '$HOME/.spectator/.creds' in script
+    assert "set -a" in script
+    # save_block: writes .creds when it doesn't exist.
+    assert "wrote $CREDS_FILE" in script
+    assert "chmod 600" in script
+    # Both blocks reference the bash-friendly $HOME/.spectator path,
+    # NOT the literal "~/.spectator" (which doesn't tilde-expand
+    # inside double quotes).
+    assert "~/.spectator/.creds" not in script
+
+
+def test_stack_up_sources_creds_block() -> None:
+    """spectator up needs NVIDIA_API_KEY for remote LLM auth and
+    NGC_CLI_API_KEY for docker pull. After v0.4.4, the up bash payload
+    sources .creds at the top so both come from the canonical file
+    (or fall through to the SSH-propagated env if .creds is absent)."""
+    from src import config, stack
+
+    captured: list[str] = []
+
+    def fake_exec(host, script, env=None):
+        captured.append(script)
+        from src._run import RunResult
+        return RunResult(rc=0, stdout="", stderr="")
+
+    original_exec = stack._exec
+    stack._exec = fake_exec
+    try:
+        cfg = config.StackConfig(workdir="~/.spectator")
+        stack.up(cfg, host="myspark1-local")
+    finally:
+        stack._exec = original_exec
+
+    assert len(captured) == 1
+    script = captured[0]
+    assert '$HOME/.spectator/.creds' in script
+    assert "set -a" in script
+
+
 def test_audio_fetch_quotes_remote_path_with_spaces(monkeypatch, tmp_path) -> None:
     """v0.4.2 regression test for bug 3 in the 2026-05-09 report.
 

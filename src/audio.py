@@ -31,7 +31,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from . import config
+from . import _creds, config
 from ._run import RunResult, run, rsync_to, ssh_run, ssh_stream
 
 console = Console()
@@ -178,9 +178,16 @@ def render_presets() -> None:
 
 def install_audio_venv(host: str | None, cfg: config.StackConfig) -> RunResult:
     """Idempotent install: venv + torch (cu128 if GPU, else CPU) + openai-whisper."""
+    workdir_bash = _expand_tilde(cfg.workdir)
     script = textwrap.dedent(f'''
         set -e
         export PATH="$HOME/.local/bin:$PATH"
+
+        # Source $workdir/.creds if it exists. v0.4.4: .creds is the
+        # source of truth for any creds Spectator needs; we source
+        # before anything else so the rest of the script sees the
+        # right values.
+        {_creds.source_block(workdir_bash)}
 
         if ! command -v uv >/dev/null 2>&1; then
           echo "==== installing uv ===="

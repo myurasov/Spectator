@@ -267,6 +267,21 @@ when the maintainer adds or removes items here.)
   but the on-target rsync target dir is capitalized because it's the
   project name humans see in `ls`. (May 2026, v0.3.0)
 
+- **`$workdir/.creds` is the source of truth for credentials (v0.4.4+)**:
+  any bash payload that needs `NGC_CLI_API_KEY` / `NVIDIA_API_KEY` /
+  `LLM_ENDPOINT_URL` sources `$workdir/.creds` at the top via the
+  `_creds.source_block(workdir_bash)` helper. Values in the file
+  OVERRIDE anything passed via SSH env / `--ngc-key` / `--nvidia-key`
+  — that's deliberate, the file is the persistent canonical store.
+  First install (`spectator install`) calls `_creds.save_block(...)`
+  to write `.creds` if it doesn't already exist, capturing whatever
+  vars are currently in env. Subsequent installs leave the file
+  alone; rotate keys by editing it directly. New code that introduces
+  a credential-dependent bash flow MUST source `.creds` at the top —
+  add `_creds.source_block(workdir_bash)` to the rendered bash. New
+  cred vars get added to `_creds.CREDS_VARS` and round-trip through
+  the file automatically. (May 2026, v0.4.4)
+
 - **`down` is non-destructive; `uninstall` does the rm -rf**:
   `spectator down` stops everything Spectator launches (VSS docker
   stack, `spectator-up` tmux, per-job `audio-*` tmux sessions) but

@@ -20,8 +20,19 @@ from __future__ import annotations
 
 import textwrap
 
-from . import config
+from . import _creds, config
 from ._run import RunResult, run, ssh_run
+
+
+def _bash_workdir(workdir: str) -> str:
+    """Same convention as audio._expand_tilde / install._bash_workdir —
+    bash-friendly form so the rendered ``[ -f "$path" ]`` test
+    actually expands the leading tilde."""
+    if workdir.startswith("~/"):
+        return "$HOME/" + workdir[2:]
+    if workdir == "~":
+        return "$HOME"
+    return workdir
 
 
 def _vss_dir(cfg: config.StackConfig) -> str:
@@ -48,7 +59,12 @@ def up(cfg: config.StackConfig, host: str | None = None,
         f"--use-remote-llm "
         f"--llm {cfg.remote_llm}"
     )
+    workdir_bash = _bash_workdir(cfg.workdir)
     script = textwrap.dedent(f'''
+        # Source $workdir/.creds if present (v0.4.4 — creds are
+        # authoritative once the file exists; SSH-propagated env vars
+        # become a no-op here when .creds wins).
+        {_creds.source_block(workdir_bash)}
         cd {_vss_dir(cfg)}
         mkdir -p {_logs_dir(cfg)}
         > {_logs_dir(cfg)}/up.log
