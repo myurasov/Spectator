@@ -161,6 +161,114 @@ def test_detect_device_falls_back_to_cpu_when_probe_fails(monkeypatch) -> None:
     assert audio_mod._detect_device(cfg, host=None) == "cpu"
 
 
+def test_audio_fetch_quotes_remote_path_with_spaces(monkeypatch, tmp_path) -> None:
+    """v0.4.2 regression test for bug 3 in the 2026-05-09 report.
+
+    `spectator audio fetch --target HOST --only 'stem with spaces'`
+    used to fail because the remote rsync path wasn't shell-escaped
+    before going through SSH. The remote shell would word-split
+    ``host:/path/audio-out/stem with spaces/`` into three pieces, each
+    treated as a separate rsync source, and rsync would die with
+    ``link_stat /path/audio-out/stem ... No such file or directory``.
+
+    Fix: ``audio.fetch()`` now wraps the remote path with
+    ``shlex.quote()``. We render the rsync argv via a fake `run` and
+    assert: (a) only one positional path argument before dest, (b) it
+    starts with ``host:`` followed by the single-quoted full path
+    (literal apostrophes around the entire ``cfg.workdir/audio-out/...``
+    suffix), (c) the inner spaces / parens / dollar signs are not
+    escaped — single-quoting handles them whole.
+    """
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    captured: list[list[str]] = []
+
+    def fake_run(args, env=None, **kw):
+        captured.append(list(args))
+        return RunResult(rc=0, stdout="", stderr="")
+
+    monkeypatch.setattr(audio_mod, "run", fake_run)
+
+    cfg = StackConfig(workdir="~/.spectator")
+    dest = tmp_path / "out"
+
+    # Stem with all the real-world shell-active troublemakers — spaces,
+    # parens, brackets, dollar, backticks (on a Mac where meeting
+    # recordings tend to have these).
+    nasty_stem = "MY-NIMA 1_1 0507 (v2) [final] $TEST `cmd`"
+
+    audio_mod.fetch(host="myspark1-local", cfg=cfg, dest=dest, only=nasty_stem)
+
+    assert len(captured) == 1
+    args = captured[0]
+    # Layout: ["rsync", "-avh", "--progress", "host:'<quoted-path>'", "<dest>/"]
+    assert args[0] == "rsync"
+    assert "-avh" in args
+    assert "--progress" in args
+
+    # Find the host:... arg
+    remote_args = [a for a in args if a.startswith("myspark1-local:")]
+    assert len(remote_args) == 1, (
+        f"expected exactly one host:path arg, got: {args}"
+    )
+    remote_arg = remote_args[0]
+
+    # The path part must be single-quoted (shlex.quote default), and
+    # the nasty stem must appear inside the quotes verbatim.
+    _, _, remote_path_quoted = remote_arg.partition(":")
+    assert remote_path_quoted.startswith("'")
+    assert remote_path_quoted.endswith("/'")  # trailing slash is rsync convention
+    assert nasty_stem in remote_path_quoted
+
+    # Sanity: verify the rendered shell sees ONE token. We don't do
+    # this on a real remote — just shell-parse the local rsync argv
+    # element to confirm it would round-trip.
+    import shlex as _shlex
+    parsed = _shlex.split(remote_arg)
+    assert len(parsed) == 1, (
+        f"remote arg word-splits into multiple tokens — quoting failed.\n"
+        f"  arg = {remote_arg!r}\n"
+        f"  split = {parsed}"
+    )
+    # Single token == "host:/full/path/with everything intact/"
+    expected_path = (
+        f"~/.spectator/audio-out/{nasty_stem}/"
+    )
+    assert parsed[0] == f"myspark1-local:{expected_path}"
+
+
+def test_audio_fetch_local_no_host_no_quoting_needed(monkeypatch, tmp_path) -> None:
+    """Sanity: the local-fetch branch (no SSH) doesn't need shell-quoting
+    because the path crosses no shell boundary — Python-side argv stays
+    one element. Pin that we're NOT accidentally quoting it (which
+    would create a directory literally named "'<path>'")."""
+    from src import audio as audio_mod
+    from src._run import RunResult
+    from src.config import StackConfig
+
+    captured: list[list[str]] = []
+
+    def fake_run(args, env=None, **kw):
+        captured.append(list(args))
+        return RunResult(rc=0, stdout="", stderr="")
+
+    monkeypatch.setattr(audio_mod, "run", fake_run)
+
+    cfg = StackConfig(workdir=str(tmp_path / "wd"))
+    dest = tmp_path / "out"
+
+    audio_mod.fetch(host=None, cfg=cfg, dest=dest, only="stem with spaces")
+
+    assert len(captured) == 1
+    args = captured[0]
+    src = args[-2]  # rsync ... <src> <dest>/
+    # No surrounding quotes (Python-level argv).
+    assert not src.startswith("'")
+    assert "stem with spaces" in src
+
+
 def test_detect_device_skips_mps_by_default(monkeypatch, capsys) -> None:
     """v0.4.1: auto-detected MPS is downgraded to CPU because openai-whisper
     crashes on Apple Silicon GPU with the large-v3 model family used by

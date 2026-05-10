@@ -639,7 +639,18 @@ def status(host: str | None, cfg: config.StackConfig) -> RunResult:
 
 def fetch(host: str | None, cfg: config.StackConfig,
           dest: Path, only: str | None = None) -> RunResult:
-    """rsync `$workdir/audio-out/[<only>/]` to `dest/`."""
+    """rsync `$workdir/audio-out/[<only>/]` to `dest/`.
+
+    Shell-quotes the remote path so stems with spaces / parens /
+    brackets / ``$`` / backticks survive the remote-shell parsing.
+    Without quoting, ``rsync host:/path/with spaces/`` is split by the
+    remote shell into multiple paths, and each piece is treated as a
+    separate source — invariably failing with ``link_stat ... No such
+    file or directory`` on every fragment. Real-world trip-ups are
+    most often macOS meeting recordings with spaces in the basename
+    (e.g. ``"My Recording.mp3"`` → stem ``My Recording`` → fetch
+    fails). v0.4.2 fix.
+    """
     dest.mkdir(parents=True, exist_ok=True)
     src = f"{cfg.workdir}/{AUDIO_OUT_RELPATH}/"
     if only:
@@ -647,6 +658,12 @@ def fetch(host: str | None, cfg: config.StackConfig,
         dest = dest / only.rstrip("/")
         dest.mkdir(parents=True, exist_ok=True)
     if host:
+        # shlex.quote single-quotes the path; the remote shell sees
+        # one argument and rsync forwards it intact. No further
+        # escaping needed because we don't expand $VAR / `...` in
+        # paths. Local rsync (else branch below) doesn't need this
+        # because Python-level argv stays a single argument.
+        remote_arg = f"{host}:{shlex.quote(src)}"
         return run(["rsync", "-avh", "--progress",
-                    f"{host}:{src}", str(dest) + "/"])
+                    remote_arg, str(dest) + "/"])
     return run(["rsync", "-avh", str(src), str(dest) + "/"])
