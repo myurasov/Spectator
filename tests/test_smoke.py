@@ -172,6 +172,50 @@ def test_audio_transcribe_help_advertises_device_flag() -> None:
         assert kw in result.stdout
 
 
+def test_down_script_covers_every_spectator_launched_thing() -> None:
+    """v0.3.5: `spectator down` must cover everything Spectator launches
+    on the target, not just the VSS docker stack and the bring-up tmux.
+
+    Each branch of the rendered bash payload is pinned here so a future
+    edit can't silently regress the cleanup. Branches:
+
+      1. dev-profile.sh down (VSS docker stack)
+      2. tmux kill-session -t spectator-up (bring-up watcher)
+      3. tmux kill-session for any `audio-*` session (transcribe jobs —
+         these can be holding the GPU long after VSS is down)
+      4. cache cleaner status surfaced but NOT auto-stopped (sudo)
+      5. final docker ps snapshot for confirmation
+    """
+    from src import stack
+    from src.config import StackConfig
+
+    captured: list[str] = []
+
+    def fake_exec(host, script, env=None):
+        captured.append(script)
+        from src._run import RunResult
+
+        return RunResult(rc=0, stdout="", stderr="")
+
+    original = stack._exec
+    stack._exec = fake_exec
+    try:
+        stack.down(StackConfig(workdir="~/.spectator"), host="myspark1-local")
+    finally:
+        stack._exec = original
+
+    script = captured[0]
+
+    assert "scripts/dev-profile.sh down" in script
+    assert "tmux kill-session -t spectator-up" in script
+    assert "grep '^audio-'" in script
+    assert "tmux kill-session -t \"$s\"" in script
+    assert "sys-cache-cleaner.sh" in script
+    assert "spectator system cache-cleaner-stop" in script
+    assert "post-down" in script
+    assert "~/.spectator/bin/sys-cache-cleaner.sh" in script  # workdir interp
+
+
 def test_install_script_handles_existing_non_git_vss_dir() -> None:
     """v0.3.4: the user-install bash script must distinguish three states
     of `$workdir/video-search-and-summarization/`:

@@ -74,10 +74,50 @@ def up(cfg: config.StackConfig, host: str | None = None,
 
 
 def down(cfg: config.StackConfig, host: str | None = None) -> RunResult:
+    """Stop everything Spectator launches on the target.
+
+    Covers (in order):
+      1. VSS docker compose stack (`scripts/dev-profile.sh down`).
+      2. The `spectator-up` tmux session (the bring-up watcher).
+      3. Any `audio-*` tmux sessions (one per `audio transcribe` job).
+         These can be holding the GPU long after VSS is down — silently
+         competing with whatever the user brings back up next.
+      4. The user-local cache cleaner is *surfaced but not stopped* —
+         it runs under sudo, so auto-stopping would require an
+         interactive password prompt during `down`. Run
+         `spectator system cache-cleaner-stop` separately to retire it.
+      5. Final post-down container snapshot, so the user can confirm
+         nothing's lingering.
+    """
+    cleaner_path = f"{cfg.workdir}/{config.CACHE_CLEANER_RELPATH}"
     script = textwrap.dedent(f'''
         cd {_vss_dir(cfg)}
         scripts/dev-profile.sh down || true
         tmux kill-session -t spectator-up 2>/dev/null || true
+
+        # Kill any audio transcribe tmux sessions (named `audio-<stem>`).
+        # Listing first + iterating lets us print one line per killed
+        # session — `tmux list-sessions | xargs kill-session` would be
+        # silent.
+        audio_sessions="$(tmux list-sessions -F '#{{session_name}}' \\
+          2>/dev/null | grep '^audio-' || true)"
+        if [ -n "$audio_sessions" ]; then
+          echo "==== killing audio transcribe tmux sessions ===="
+          echo "$audio_sessions" | while read -r s; do
+            tmux kill-session -t "$s" 2>/dev/null && echo "  ✓ $s killed"
+          done
+        fi
+
+        # Cache cleaner status: surface but don't auto-stop. It needs
+        # sudo, so killing it would require an interactive password
+        # prompt — out of scope for `down`. Caller can retire it with
+        # the dedicated verb.
+        if pgrep -f sys-cache-cleaner.sh >/dev/null 2>&1; then
+          echo "==== cache cleaner is still running (left running) ===="
+          echo "    script: {cleaner_path}"
+          echo "    stop with: spectator system cache-cleaner-stop"
+        fi
+
         echo "==== docker containers (post-down) ===="
         docker ps --format 'table {{{{.Names}}}}\t{{{{.Status}}}}' | head -20
     ''').strip()

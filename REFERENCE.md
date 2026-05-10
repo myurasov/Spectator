@@ -400,7 +400,7 @@ src/webui/
 | `spectator rsync --target HOST` | Just rsync the source tree (no `uv sync`, no install) — for iterative dev |
 | `spectator deploy --target HOST` | Full sync: rsync + remote `uv sync` + remote `install` |
 | `spectator up [--target HOST]` | Bring up the stack via `dev-profile.sh up -p base -H DGX-SPARK --use-remote-llm --llm nvidia/nvidia-nemotron-nano-9b-v2` (in tmux) |
-| `spectator down [--target HOST]` | Stop the stack |
+| `spectator down [--target HOST]` | Stop everything Spectator launches on the target: VSS docker stack, the `spectator-up` tmux session, and any `audio-*` tmux sessions (per-job transcribe jobs). The user-local cache cleaner is left running (it needs sudo) — surface only; retire with `spectator system cache-cleaner-stop` separately |
 | `spectator status [--target HOST]` | tmux / docker compose ps / UI port / GPU |
 | `spectator logs [--target HOST] [--follow] [--service NAME]` | Tail the bring-up log or a specific docker service |
 | `spectator ui [--target HOST]` | Print UI URL + SSH port-forward recipe |
