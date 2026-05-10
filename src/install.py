@@ -69,6 +69,30 @@ def _user_install_script(workdir: str, vss_checkout: str,
           git checkout main
           git pull --ff-only
           cd ..
+        elif [ -d "{vss_checkout}" ]; then
+          # Dir exists but is not a git checkout. Two sub-cases:
+          #   1. empty dir   — leftover from a failed clone attempt. Rmdir
+          #      and clone fresh; no data loss possible.
+          #   2. non-empty   — something else lives there. Refuse and ask
+          #      the user to inspect / remove it before retrying. Better
+          #      than a confusing `git clone` "already exists" error.
+          if [ -z "$(ls -A "{vss_checkout}" 2>/dev/null)" ]; then
+            echo "==== {vss_checkout}/ exists but is empty; removing and cloning fresh ===="
+            rmdir "{vss_checkout}"
+            git clone "{config.VSS_REPO_URL}" "{vss_checkout}"
+          else
+            echo "==== ERROR: {workdir}/{vss_checkout}/ exists but is not a git checkout. ===="
+            echo "    contents (first few entries):"
+            ls -A "{vss_checkout}" | head -10 | sed 's/^/      /'
+            echo
+            echo "    If it's leftover from a failed install or an interrupted migration,"
+            echo "    remove it and re-run deploy:"
+            echo "      ssh <gpu-machine> 'rm -rf {workdir}/{vss_checkout}'"
+            echo "      ./spectator deploy --target <gpu-machine>"
+            echo
+            echo "    If you put real data there, move it elsewhere first."
+            exit 1
+          fi
         else
           echo "==== Cloning {config.VSS_REPO_URL} ===="
           git clone "{config.VSS_REPO_URL}" "{vss_checkout}"

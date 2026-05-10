@@ -170,3 +170,30 @@ def test_audio_transcribe_help_advertises_device_flag() -> None:
     assert "--device" in result.stdout
     for kw in ("cuda", "mps", "cpu"):
         assert kw in result.stdout
+
+
+def test_install_script_handles_existing_non_git_vss_dir() -> None:
+    """v0.3.4: the user-install bash script must distinguish three states
+    of `$workdir/video-search-and-summarization/`:
+
+      1. dir + `.git/`   -> fetch path
+      2. dir without .git, empty -> rmdir + clone fresh
+      3. dir without .git, non-empty -> error with rm-rf hint
+
+    Pre-v0.3.4 the script only handled (1) and an else `git clone` that
+    crashed loudly on (2) and (3) ('destination path ... already exists
+    and is not an empty directory'). We render the script and assert
+    each branch is present so future edits can't silently regress."""
+    from src.install import _user_install_script
+
+    script = _user_install_script(
+        workdir="~/.spectator",
+        vss_checkout="video-search-and-summarization",
+        ngc_api_key=None,
+    )
+
+    assert 'if [ -d "video-search-and-summarization/.git" ]; then' in script
+    assert 'elif [ -d "video-search-and-summarization" ]; then' in script
+    assert 'rmdir "video-search-and-summarization"' in script
+    assert "exists but is not a git checkout" in script
+    assert "rm -rf ~/.spectator/video-search-and-summarization" in script
