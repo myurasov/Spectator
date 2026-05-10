@@ -6,8 +6,23 @@ Copyright (c) 2026 Mikhail Yurasov. Licensed under the [Apache License 2.0](LICE
 
 ## TL;DR
 
+**Just want to transcribe a meeting on a Mac?** No GPU host required — Apple Silicon runs Whisper locally via MPS at 2-4× faster than real-time:
+
 ```bash
-# one-time setup
+git clone https://github.com/myurasov/Spectator.git spectator && cd spectator
+
+# local audio venv (~5 min, one-time)
+./spectator audio install
+
+# auto-detects MPS on Apple Silicon, CUDA on a Linux box, falls back to CPU
+./spectator audio transcribe meeting.mp3
+```
+
+Output lands at `~/.spectator-workdir/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`). See [Transcribe locally on a Mac](#transcribe-locally-on-a-mac-no-gpu-host-needed) for the full path.
+
+**Want video summarization or Q&A?** That needs the VSS Blueprint, which needs a GPU host:
+
+```bash
 git clone https://github.com/myurasov/Spectator.git spectator && cd spectator
 
 # install local venv + deps
@@ -29,7 +44,7 @@ export NVIDIA_API_KEY="nvapi-..."
 
 # everyday use:
 
-# transcribe a meeting recording
+# transcribe a meeting recording (uses GPU host)
 ./spectator audio transcribe meeting.mp3 --target <gpu-machine>
 
 # summarize a video
@@ -56,9 +71,11 @@ For details on each step, read on. For deeper reference (full SSH config, hardwa
     - [5. Bring the VSS stack up](#5-bring-the-vss-stack-up)
   - [Common tasks](#common-tasks)
     - [Transcribe a meeting recording](#transcribe-a-meeting-recording)
+    - [Transcribe locally on a Mac (no GPU host needed)](#transcribe-locally-on-a-mac-no-gpu-host-needed)
     - [Summarize a video](#summarize-a-video)
     - [Ask follow-up questions](#ask-follow-up-questions)
-    - [Open the web UI](#open-the-web-ui)
+    - [Open the VSS agent's web UI](#open-the-vss-agents-web-ui)
+    - [Use the Spectator Web UI (v0.2.0+)](#use-the-spectator-web-ui-v020)
     - [Tear down when you're done](#tear-down-when-youre-done)
   - [Where to go next](#where-to-go-next)
   - [Contributing](#contributing)
@@ -67,12 +84,19 @@ For details on each step, read on. For deeper reference (full SSH config, hardwa
 
 Two pipelines, one CLI:
 
-- **Audio (Whisper)** — upload a meeting / call / interview, get back a clean transcript with timestamps. Auto-detects bilingual recordings; quality presets for clean / standard / phone / very-noisy audio.
-- **Video (VSS)** — upload a recording, get back a structured summary with timestamps and action items, then ask follow-up questions in plain English.
+- **Audio (Whisper)** — upload a meeting / call / interview, get back a clean transcript with timestamps. Auto-detects bilingual recordings; quality presets for clean / standard / phone / very-noisy audio. Auto-detects the best available device (`cuda > mps > cpu`), so a Mac with Apple Silicon transcribes locally via MPS at 2-4× faster-than-real-time without any GPU host.
+- **Video (VSS)** — upload a recording, get back a structured summary with timestamps and action items, then ask follow-up questions in plain English. Requires the VSS Blueprint stack, which runs on an NVIDIA GPU host.
 
-Spectator does **not** reimplement either pipeline — it automates the install, deployment, and lifecycle steps for you. Your laptop drives the GPU host over SSH; the VLM and Whisper run on the GPU; the LLM is called remotely on `build.nvidia.com`.
+Spectator does **not** reimplement either pipeline — it automates the install, deployment, and lifecycle steps for you. For audio: device auto-detection means the same command works on your Mac and on a remote Spark. For video: your laptop drives the GPU host over SSH; the VLM and Whisper run on the GPU; the LLM is called remotely on `build.nvidia.com`.
 
 ## What you'll need
+
+Audio-only on a Mac (Whisper transcripts, no video / Q&A):
+
+- A **macOS laptop** (Apple Silicon recommended for MPS speedups; Intel works too via CPU) with [`uv`](https://docs.astral.sh/uv/) installed (`brew install uv`).
+- That's it. No SSH, no API keys, no GPU host.
+
+Full stack (audio + video summarization + Q&A):
 
 - A **macOS or Linux laptop** with [`uv`](https://docs.astral.sh/uv/) installed (`brew install uv` on macOS, or `curl -LsSf https://astral.sh/uv/install.sh | sh`).
 - A **GPU host you can SSH into**. Default target is [DGX Spark (GB10)](https://build.nvidia.com/spark/vss); the same workflow runs on H100, L40S, RTX PRO 6000, and Jetson THOR. Your team's hardware lead can point you at one.

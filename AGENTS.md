@@ -15,7 +15,7 @@ sources.
 
 ## What Spectator is
 
-A thin (~1.5 kLoC) Python CLI wrapper around two stacks:
+A thin (~3.5 kLoC of Python plus a small FastAPI Web UI) CLI wrapper around two stacks:
 
 1. NVIDIA's [Video Search & Summarization (VSS) Blueprint v3.1](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization)
    — `process`, `query`, `up` / `down` / `status` / `logs` / `ui`.

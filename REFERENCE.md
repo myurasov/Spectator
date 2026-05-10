@@ -34,7 +34,8 @@ Everything Spectator touches falls into one of these buckets:
 | **Spectator's own deps** | `.venv/` in the project directory | first `./spectator …` call |
 | **VSS stack** | docker images / containers + `$workdir/video-search-and-summarization/` | brought up by `spectator up` |
 | **Whisper venv** | `$workdir/audio-venv/` (torch + openai-whisper) | one-time `spectator audio install` |
-| **Per-user state** | `$workdir/` (cloned VSS repo, user-local cache cleaner, audio-in/out/logs) and `~/.docker/config.json` (NGC login) | `spectator install` default |
+| **Web UI state** | `$workdir/ui-server/` (PID file, server log, per-job JSON ledger, uploaded files) | started by `spectator ui-server start` (v0.2.0+) |
+| **Per-user state** | `$workdir/` (cloned VSS repo, user-local cache cleaner, audio-in/out/logs, ui-server/) and `~/.docker/config.json` (NGC login) | `spectator install` default |
 | **System mutations** | `nvidia-ctk runtime configure`, `systemctl restart docker`, `usermod -aG docker` | **opt-in only** via `spectator install --apply-system` |
 
 The default `spectator install` never writes outside `$workdir` and `~/.docker/config.json`. All system-level changes are gated behind `--apply-system` (with sudo prompts you'll see). `$workdir` defaults to `~/.spectator-workdir/` on the target.
@@ -492,23 +493,42 @@ spectator/
 ├── README.md                 # beginner-friendly setup walk-through
 ├── REFERENCE.md              # this file — full reference
 ├── AGENTS.md                 # entry point for AI / IDE assistants
+├── CONTRIBUTING.md           # PR workflow + DCO sign-off requirement
+├── SECURITY.md               # private-disclosure process
+├── THIRD_PARTY_NOTICES.md    # runtime / dev / external-service licenses
 ├── LICENSE                   # Apache-2.0
 ├── spectator                 # thin shell wrapper (install/test/lint/fmt + CLI forwarder)
+├── ai/                       # AI-agent-readable spec + maintainer rules
+│   ├── dev.agent.md          # primary instruction file for AI IDEs
+│   ├── dev.memory.md         # accumulated maintainer preferences
+│   └── spec.txt              # canonical architecture / CLI surface spec
 ├── src/                      # invoked as `python -m src` with PYTHONPATH=<root>
-│   ├── __init__.py
+│   ├── __init__.py           # __version__
 │   ├── __main__.py           # `python -m src` entrypoint
-│   ├── cli.py                # typer entrypoint (help, install, deploy, rsync, up,
-│   │                         # down, status, logs, ui, process, query, audio, system)
-│   ├── config.py             # constants + StackConfig dataclass
+│   ├── cli.py                # typer entrypoint (help, install, deploy, rsync,
+│   │                         # up, down, status, logs, ui, process, query,
+│   │                         # audio, system, ui-server)
+│   ├── config.py             # constants (DEFAULT_REMOTE_WORKDIR,
+│   │                         # TOOL_TREE_RELPATH, ports) + StackConfig dataclass
 │   ├── _run.py               # local + ssh subprocess primitives
 │   ├── preflight.py          # driver / CUDA / docker / NGC checks
 │   ├── install.py            # idempotent install bash script
 │   ├── deploy.py             # rsync_only + full deploy (rsync + uv sync + install)
 │   ├── stack.py              # up/down/status/logs (wraps dev-profile.sh)
 │   ├── api.py                # upload / summarize / query (REST + OpenAI-compat)
-│   └── audio.py              # whisper install + transcribe + status + fetch
+│   ├── audio.py              # whisper install + transcribe + status + fetch
+│   │                         # (auto-detects cuda > mps > cpu)
+│   └── webui/                # persistent FastAPI Web UI (added in v0.2.0)
+│       ├── _launch.py        # uvicorn-importable entry point
+│       ├── server.py         # create_app() factory + state-paths helper
+│       ├── jobs.py           # Job dataclass + JobLedger persistence
+│       ├── pipeline.py       # subprocess wrapper for audio / video
+│       ├── progress.py       # whisper-segment parser + ffprobe duration probe
+│       ├── routes/           # FastAPI routers (status, vss, jobs, ws, query)
+│       └── static/           # vanilla single-page UI (index.html + app.js + style.css)
 └── tests/
-    └── test_smoke.py         # import + --help round-trip
+    ├── test_smoke.py         # CLI surface, version, device detection, config pins
+    └── test_webui.py         # JobLedger persistence, progress parser, FastAPI routes
 ```
 
-The whole tool is < 1.5k lines of Python; the heavy lifting is delegated to upstream VSS and Whisper.
+Roughly 2.4 kLoC of Python in the non-Web-UI core, plus 1.2 kLoC of FastAPI routers and 700 LoC of static-frontend HTML / CSS / JS. The heavy lifting is delegated to upstream VSS and Whisper.

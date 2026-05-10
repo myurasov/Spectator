@@ -212,9 +212,10 @@ specific event. Don't reorder existing entries unless asked.
 - Releases are tagged `vX.Y.Z` (annotated tags, e.g. `v0.1.0`) and
   exposed via `gh release create`. Tag commit + GH release in the
   same step. (May 2026)
-- The version string lives in two places that must stay in sync:
-  `pyproject.toml [project].version` and `src/__init__.py`'s
-  `__version__`. Bump them together.
+- The version string lives in three places that must stay in sync:
+  `pyproject.toml [project].version`, `src/__init__.py`'s
+  `__version__`, and `ai/spec.txt`'s `Version:` header. Bump them
+  together.
 
 ## Ask-before-acting list
 
@@ -234,3 +235,19 @@ when the maintainer adds or removes items here.)
 
 <!-- Add new entries below this line. Newer entries last. Move stable
      rules into the structured sections above when they prove out. -->
+
+- **v0.3.0 path defaults**: the default `$workdir` is
+  `~/.spectator-workdir/` (dot-prefixed, hidden), and the rsynced
+  project tree on the target lives at `$workdir/Spectator/` (capitalized
+  — represents the project name as humans see it browsing `ls
+  $workdir/`). Single source of truth: `config.DEFAULT_REMOTE_WORKDIR`
+  and `config.TOOL_TREE_RELPATH`. New code that constructs paths under
+  `$workdir/` MUST read from `cfg.workdir` and (when applicable)
+  `config.TOOL_TREE_RELPATH` — never hardcode `~/spectator/` or
+  `spectator-tool/` in bash heredocs, doc snippets, or Python literals.
+  (May 2026, v0.3.0)
+- **Capitalization exception for `Spectator/` on disk**: the rule "no
+  Spectator capitalization in code paths or identifiers" still holds
+  for the wrapper filename, Python module, env vars, and CLI verbs —
+  but the on-target rsync target dir is capitalized because it's the
+  project name humans see in `ls`. (May 2026, v0.3.0)
