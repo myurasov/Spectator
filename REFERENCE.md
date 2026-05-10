@@ -38,7 +38,7 @@ Everything Spectator touches falls into one of these buckets:
 | **Per-user state** | `$workdir/` (cloned VSS repo, user-local cache cleaner, audio-in/out/logs, ui-server/) and `~/.docker/config.json` (NGC login) | `spectator install` default |
 | **System mutations** | `nvidia-ctk runtime configure`, `systemctl restart docker`, `usermod -aG docker` | **opt-in only** via `spectator install --apply-system` |
 
-The default `spectator install` never writes outside `$workdir` and `~/.docker/config.json`. All system-level changes are gated behind `--apply-system` (with sudo prompts you'll see). `$workdir` defaults to `~/.spectator-workdir/` on the target.
+The default `spectator install` never writes outside `$workdir` and `~/.docker/config.json`. All system-level changes are gated behind `--apply-system` (with sudo prompts you'll see). `$workdir` defaults to `~/.spectator/` on the target.
 
 ## Topology (v3.1 on Spark)
 
@@ -116,7 +116,7 @@ Every `--target HOST` command relies on plain `ssh HOST` working without prompts
 Host <gpu-machine>
     # IP or DNS of your GPU host
     HostName 10.0.0.42
-    # whoever owns ~/.spectator-workdir/ on the target
+    # whoever owns ~/.spectator/ on the target
     User ubuntu
     # SSH key, not password
     IdentityFile ~/.ssh/id_ed25519
@@ -170,7 +170,7 @@ If you've put the keys in a file, source it before running Spectator. On the Spa
 ./spectator deploy --target <gpu-machine>
 ```
 
-`deploy` rsyncs the tool to `~/.spectator-workdir/Spectator/` on the Spark, runs `uv sync` there, then runs `spectator install` over SSH (clones the VSS repo, writes a user-local cache-cleaner script, NGC docker login).
+`deploy` rsyncs the tool to `~/.spectator/Spectator/` on the Spark, runs `uv sync` there, then runs `spectator install` over SSH (clones the VSS repo, writes a user-local cache-cleaner script, NGC docker login).
 
 ### 3. Bring the VSS stack up (video pipeline)
 
@@ -191,7 +191,7 @@ The video must be a path the VSS Agent can read on the target host:
 
 ```bash
 ssh <gpu-machine>
-cd ~/.spectator-workdir/Spectator
+cd ~/.spectator/Spectator
 ./spectator process /path/to/meeting.mp4 \
   --prompt "Summarize the meeting; list action items with timestamps; flag every slide change."
 
@@ -487,24 +487,21 @@ Performance expectations (orientation only, model = `large-v3-turbo`):
 - **Bring-up time**: 30–45 min on first `spectator up`. Subsequent `up` calls reuse the local image cache.
 - **Ports**: agent UI on 3030 (the bring-up patches the upstream compose, which hardcodes 3000, so port 3000 stays free for other dev tooling), agent API on 8000. Forward both via `ssh -L` (or use `spectator ui` for the recipe).
 - **Spark LLM constraint**: the GB10's 130 GB unified memory comfortably runs the VLM (Cosmos-Reason2-8B) but the LLM is configured to run remotely on `build.nvidia.com` for v3.1. Server-class GPU profiles (`H100`, `L40S`, `RTXPRO6000BW`) can run the LLM locally — pick the profile + `--llm` accordingly.
-- **Migrating from v0.2.x**: v0.3.0 changed the default `$workdir` from `~/spectator/` to `~/.spectator-workdir/`, and renamed the rsynced project tree from `spectator-tool/` to `Spectator/` (governed by `config.TOOL_TREE_RELPATH`). The inner-dir rename is mandatory regardless of whether you adopt the new default; the outer `$workdir` move is optional.
+- **Migrating to the v0.3.2 default layout**: the on-disk layout has shifted twice in the v0.3 line. Current default is `~/.spectator/` (outer `$workdir`) with the rsynced project tree at `~/.spectator/Spectator/` (governed by `config.TOOL_TREE_RELPATH`). To get there from any prior version:
 
-  Recommended: take both renames in one step, then re-deploy.
+  | Coming from | Outer dir | Inner-tree dir | One-shot mv |
+  |---|---|---|---|
+  | v0.2.x | `~/spectator/` | `spectator-tool/` | `mv ~/spectator/spectator-tool ~/spectator/Spectator && mv ~/spectator ~/.spectator` |
+  | v0.3.0 / v0.3.1 | `~/.spectator-workdir/` | `Spectator/` | `mv ~/.spectator-workdir ~/.spectator` |
+
+  After the `mv`, redeploy from your laptop so v0.3.2 lands on the host:
 
   ```bash
-  ssh <gpu-machine> 'mv ~/spectator/spectator-tool ~/spectator/Spectator && mv ~/spectator ~/.spectator-workdir'
+  ssh <gpu-machine> '<one-shot mv from the table above>'
   ./spectator deploy --target <gpu-machine>
   ```
 
-  Or keep the existing `~/spectator/` workdir and only do the inner-dir rename:
-
-  ```bash
-  ssh <gpu-machine> 'mv ~/spectator/spectator-tool ~/spectator/Spectator'
-  ./spectator deploy --target <gpu-machine> --workdir ~/spectator
-  # then pass --workdir ~/spectator on every subsequent call
-  ```
-
-  Rsync excludes `.venv/`, so the audio venv and other cached state under the renamed tree survive both paths. New installs need no migration — the new default just works.
+  Rsync excludes `.venv/`, so the audio venv and other cached state under the renamed tree survive the move. If you'd rather keep the old `$workdir` path on the host (e.g. you have shell history / ssh-config snippets pointing at it), pass `--workdir ~/spectator` (or `~/.spectator-workdir`) on every call instead — but the inner-tree dir still needs to be `Spectator/`, so you may still need one `mv` if you're coming from v0.2.x. New installs need no migration — the v0.3.2 default just works.
 
 ## Layout
 

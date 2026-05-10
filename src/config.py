@@ -16,7 +16,7 @@ from dataclasses import dataclass
 VSS_REPO_URL = "https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization.git"
 VSS_VERSION = "v3.1.0"
 
-DEFAULT_REMOTE_WORKDIR = "~/.spectator-workdir"
+DEFAULT_REMOTE_WORKDIR = "~/.spectator"
 DEFAULT_VSS_CHECKOUT = "video-search-and-summarization"
 
 DEFAULT_HARDWARE_PROFILE = "DGX-SPARK"

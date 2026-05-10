@@ -237,7 +237,7 @@ when the maintainer adds or removes items here.)
      rules into the structured sections above when they prove out. -->
 
 - **v0.3.0 path defaults**: the default `$workdir` is
-  `~/.spectator-workdir/` (dot-prefixed, hidden), and the rsynced
+  `~/.spectator/` (dot-prefixed, hidden), and the rsynced
   project tree on the target lives at `$workdir/Spectator/` (capitalized
   — represents the project name as humans see it browsing `ls
   $workdir/`). Single source of truth: `config.DEFAULT_REMOTE_WORKDIR`

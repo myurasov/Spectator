@@ -18,7 +18,7 @@ git clone https://github.com/myurasov/Spectator.git spectator && cd spectator
 ./spectator audio transcribe meeting.mp3
 ```
 
-Output lands at `~/.spectator-workdir/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`). See [Transcribe locally on a Mac](#transcribe-locally-on-a-mac-no-gpu-host-needed) for the full path.
+Output lands at `~/.spectator/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`). See [Transcribe locally on a Mac](#transcribe-locally-on-a-mac-no-gpu-host-needed) for the full path.
 
 **Want video summarization or Q&A?** That needs the VSS Blueprint, which needs a GPU host:
 
@@ -166,7 +166,7 @@ If `preflight` flags a missing piece (e.g. user not in the `docker` group, or th
 ./spectator install --apply-system --target <gpu-machine>
 ```
 
-This is the only command Spectator runs that touches anything outside `~/.spectator-workdir/` and `~/.docker/config.json` on the host — it asks for `sudo` over SSH for each system change.
+This is the only command Spectator runs that touches anything outside `~/.spectator/` and `~/.docker/config.json` on the host — it asks for `sudo` over SSH for each system change.
 
 ### 5. Bring the VSS stack up
 
@@ -226,7 +226,7 @@ Apple Silicon Macs can transcribe audio entirely locally — no SSH, no remote h
 ./spectator audio transcribe meeting.mp3 --device mps     # force MPS even if CUDA is detected
 ```
 
-Output lands at `~/.spectator-workdir/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`).
+Output lands at `~/.spectator/audio-out/<stem>/` (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`).
 
 Rough performance on a 1-hour `meeting`-quality recording:
 
@@ -239,12 +239,12 @@ Rough performance on a 1-hour `meeting`-quality recording:
 
 ### Summarize a video
 
-The video has to live on the GPU host (where VSS can read it). The simplest workflow: SSH in, drop the file under `~/.spectator-workdir/`, run `process`:
+The video has to live on the GPU host (where VSS can read it). The simplest workflow: SSH in, drop the file under `~/.spectator/`, run `process`:
 
 ```bash
 ssh <gpu-machine>
-cd ~/.spectator-workdir/Spectator
-./spectator process /home/ubuntu/.spectator-workdir/meeting.mp4 \
+cd ~/.spectator/Spectator
+./spectator process /home/ubuntu/.spectator/meeting.mp4 \
     --prompt "Summarize the meeting; list action items with timestamps."
 ```
 

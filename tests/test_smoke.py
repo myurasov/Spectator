@@ -71,12 +71,13 @@ def test_version_attribute_present() -> None:
 
 def test_default_remote_workdir_is_dotted() -> None:
     """v0.3.0 moved the default $workdir to a dot-prefixed hidden dir
-    (`~/.spectator-workdir`) so the project's on-disk state stays out of
-    the user's `ls ~` view by default. Pin the value so any future
-    refactor that flips it back surfaces immediately."""
+    (originally `~/.spectator-workdir`, shortened to `~/.spectator` in
+    v0.3.2) so the project's on-disk state stays out of the user's
+    `ls ~` view by default. Pin the value so any future refactor that
+    flips it back surfaces immediately."""
     from src import config
 
-    assert config.DEFAULT_REMOTE_WORKDIR == "~/.spectator-workdir"
+    assert config.DEFAULT_REMOTE_WORKDIR == "~/.spectator"
 
 
 def test_tool_tree_relpath_is_capitalized() -> None:

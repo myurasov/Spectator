@@ -112,7 +112,7 @@ Every change must respect this:
 | Spectator's own deps | `.venv/` in the project directory | first `./spectator …` call |
 | VSS stack | docker images / containers + `$workdir/video-search-and-summarization/` on the target | brought up by `spectator up` |
 | Whisper venv | `$workdir/audio-venv/` on the target (torch + openai-whisper) | one-time `spectator audio install` |
-| Per-user state on target | `$workdir/` (default `~/.spectator-workdir/`) and `~/.docker/config.json` (NGC login) | `spectator install` default path |
+| Per-user state on target | `$workdir/` (default `~/.spectator/`) and `~/.docker/config.json` (NGC login) | `spectator install` default path |
 | **System mutations** | `nvidia-ctk runtime configure`, `systemctl restart docker`, `usermod -aG docker` | **opt-in only** via `spectator install --apply-system` |
 
 The default `spectator install` **never** writes outside `$workdir` and
@@ -183,7 +183,7 @@ the unit every primitive returns.
   actual CLI parameter name.
 - **No "spectator" → "Spectator" capitalization in code paths or
   identifiers.** The package is `src` (Python module), the wrapper is
-  `./spectator` (filename), `~/.spectator-workdir/` is the canonical workdir.
+  `./spectator` (filename), `~/.spectator/` is the canonical workdir.
   Capitalize "Spectator" in English prose where it's the project name
   (subject of a sentence, heading, etc.) and in the on-target rsync
   target dir name (`$workdir/Spectator/`, governed by
