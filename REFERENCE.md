@@ -15,6 +15,7 @@ Detailed reference for Spectator. For the friendly setup walk-through (designed 
   - [3. Bring the VSS stack up (video pipeline)](#3-bring-the-vss-stack-up-video-pipeline)
   - [4. Process a video via the CLI](#4-process-a-video-via-the-cli)
   - [5. Audio-only transcription (Whisper)](#5-audio-only-transcription-whisper)
+    - [audio diarize (speaker diarization)](#audio-diarize)
   - [6. Iterative development](#6-iterative-development)
 - [Web UI](#web-ui)
 - [Subcommand reference](#subcommand-reference)

@@ -71,6 +71,7 @@ For details on each step, read on. For deeper reference (full SSH config, hardwa
     - [5. Bring the VSS stack up](#5-bring-the-vss-stack-up)
   - [Common tasks](#common-tasks)
     - [Transcribe a meeting recording](#transcribe-a-meeting-recording)
+    - [Add speaker labels (diarization)](#add-speaker-labels-diarization)
     - [Transcribe locally on a Mac (no GPU host needed)](#transcribe-locally-on-a-mac-no-gpu-host-needed)
     - [Summarize a video](#summarize-a-video)
     - [Ask follow-up questions](#ask-follow-up-questions)
@@ -82,12 +83,13 @@ For details on each step, read on. For deeper reference (full SSH config, hardwa
 
 ## What it does
 
-Two pipelines, one CLI:
+Three pipelines, one CLI:
 
-- **Audio (Whisper)** — upload a meeting / call / interview, get back a clean transcript with timestamps. Auto-detects bilingual recordings; quality presets for clean / standard / phone / very-noisy audio. Auto-detects the best available device (`cuda > mps > cpu`), so a Mac with Apple Silicon transcribes locally via MPS at 2-4× faster-than-real-time without any GPU host.
-- **Video (VSS)** — upload a recording, get back a structured summary with timestamps and action items, then ask follow-up questions in plain English. Requires the VSS Blueprint stack, which runs on an NVIDIA GPU host.
+- **Audio transcription (Whisper)** — upload a meeting / call / interview, get back a clean transcript with timestamps. Auto-detects bilingual recordings; quality presets for clean / standard / phone / very-noisy audio. Auto-detects the best available device (`cuda > mps > cpu`), so a Mac with Apple Silicon transcribes locally via MPS at 2-4× faster-than-real-time without any GPU host.
+- **Speaker diarization (pyannote.audio)** — figures out *who* is talking and when, the question Whisper alone can't answer. Standalone (`spectator audio diarize`) or chained onto transcribe (`--diarize`); the merged output assigns each Whisper segment a speaker label via maximum-overlap voting against pyannote turns. Installed alongside Whisper in the same audio-venv; Hugging Face access is needed at run time only, not install time.
+- **Video summarization + Q&A (VSS)** — upload a recording, get back a structured summary with timestamps and action items, then ask follow-up questions in plain English. Requires the VSS Blueprint stack, which runs on an NVIDIA GPU host.
 
-Spectator does **not** reimplement either pipeline — it automates the install, deployment, and lifecycle steps for you. For audio: device auto-detection means the same command works on your Mac and on a remote Spark. For video: your laptop drives the GPU host over SSH; the VLM and Whisper run on the GPU; the LLM is called remotely on `build.nvidia.com`.
+Spectator does **not** reimplement any of these — it automates the install, deployment, and lifecycle steps for you. For audio: device auto-detection means the same command works on your Mac and on a remote Spark. For video: your laptop drives the GPU host over SSH; the VLM and Whisper run on the GPU; the LLM is called remotely on `build.nvidia.com`.
 
 ## What you'll need
 

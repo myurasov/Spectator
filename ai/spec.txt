@@ -72,10 +72,14 @@ IN SCOPE
   * Audio-only transcription via OpenAI Whisper as a sibling pipeline
     (separate venv at $workdir/audio-venv/): install, transcribe,
     status, fetch, presets.
+  * Speaker diarization via pyannote.audio (v0.4.8+) in the same
+    audio-venv: install (bundled with audio install by default),
+    diarize as a standalone subcommand, and --diarize as a chain onto
+    audio transcribe that emits a merged whisper+speaker transcript.
   * Preflight checks: driver, CUDA, docker, docker compose, nvidia-ctk,
     NGC reachability.
-  * tmux orchestration so long jobs (bring-up, transcription) survive
-    SSH disconnect.
+  * tmux orchestration so long jobs (bring-up, transcription,
+    diarization) survive SSH disconnect.
   * `--target HOST` flag on every command — the same code paths run
     locally or remotely.
 
