@@ -14,7 +14,6 @@ import importlib
 import pytest
 from typer.testing import CliRunner
 
-
 _PUBLIC_MODULES = (
     "src",
     "src.cli",
@@ -22,6 +21,7 @@ _PUBLIC_MODULES = (
     "src.api",
     "src.audio",
     "src.deploy",
+    "src.diarize",
     "src.install",
     "src.preflight",
     "src.stack",
@@ -725,7 +725,10 @@ def test_down_script_covers_every_spectator_launched_thing() -> None:
 
     assert "scripts/dev-profile.sh down" in script
     assert "tmux kill-session -t spectator-up" in script
-    assert "grep '^audio-'" in script
+    # v0.4.8: sweep includes both `audio-*` (transcribe jobs) and
+    # `diar-*` (pyannote diarize jobs); the grep pattern is an
+    # alternation covering both prefixes.
+    assert "grep -E '^(audio|diar)-'" in script
     assert "tmux kill-session -t \"$s\"" in script
     assert "sys-cache-cleaner.sh" in script
     assert "spectator system cache-cleaner-stop" in script
@@ -871,7 +874,6 @@ def _build_fake_project_for_wrapper_tests(tmp_path):
 
     Returns (proj_root, install_stamp). Both wrapper-fast-path tests
     use this — keeps the boilerplate together."""
-    import os
     import shutil
     import stat
     from pathlib import Path
@@ -976,7 +978,6 @@ def test_wrapper_fast_path_re_syncs_when_pyproject_content_changes(tmp_path) -> 
     content, sabotage PATH, confirm the wrapper now DOES complain
     about uv (proving the fast path got skipped)."""
     import os
-    import shutil
     import subprocess
 
     proj, stamp = _build_fake_project_for_wrapper_tests(tmp_path)
@@ -1010,7 +1011,6 @@ def test_wrapper_self_heals_legacy_empty_stamp(tmp_path) -> None:
     statement). `install` calls bootstrap then logs 'ready: ...' — fast
     path with our healthy fake .venv."""
     import os
-    import shutil
     import subprocess
 
     proj, stamp = _build_fake_project_for_wrapper_tests(tmp_path)
@@ -1223,7 +1223,6 @@ def test_audio_local_copy_resolves_workdir_correctly(tmp_path, monkeypatch) -> N
     test asserts that a local transcribe invocation copies the audio
     to `<workdir>/audio-in/<basename>` (real path, no `$HOME` token).
     """
-    import shutil
 
     from src import audio as audio_mod
     from src.config import StackConfig

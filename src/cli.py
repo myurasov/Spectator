@@ -6,18 +6,30 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
 
 from . import (
     api,
-    audio as audio_mod,
     config,
+)
+from . import (
+    audio as audio_mod,
+)
+from . import (
     deploy as deploy_mod,
+)
+from . import (
+    diarize as diarize_mod,
+)
+from . import (
     install as install_mod,
+)
+from . import (
     preflight as preflight_mod,
+)
+from . import (
     stack as stack_mod,
 )
 
@@ -111,7 +123,7 @@ def _resolve_cfg(
 @app.command()
 def help(
     ctx: typer.Context,
-    command: Optional[str] = typer.Argument(None,
+    command: str | None = typer.Argument(None,
         help="Subcommand to drill into (e.g. `spectator help up`). "
              "If omitted, prints a curated end-to-end overview."),
 ):
@@ -190,7 +202,7 @@ Friendly walk-through: [italic]README.md[/italic]. Full reference: [italic]REFER
 
 @app.command()
 def preflight(
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="SSH host to check (default: localhost)"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",
         help="Spectator $workdir on the target — used to probe $workdir/.creds "
@@ -205,11 +217,11 @@ def preflight(
 
 @app.command()
 def install(
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="SSH host to install on (default: local)."),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",
         help="Where to clone the VSS repo on the target."),
-    ngc_key: Optional[str] = typer.Option(None, "--ngc-key",
+    ngc_key: str | None = typer.Option(None, "--ngc-key",
         envvar="NGC_CLI_API_KEY",
         help="NGC API key (also picked up from $NGC_CLI_API_KEY)."),
     apply_system: bool = typer.Option(False, "--apply-system",
@@ -247,7 +259,7 @@ def install(
 
 @app.command()
 def uninstall(
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="SSH host to uninstall on (default: local)."),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",
         help="Path of the Spectator $workdir to remove on the target."),
@@ -304,7 +316,7 @@ def uninstall(
 def deploy(
     target: str = typer.Option(..., "--target", "-t", help="SSH host alias."),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
-    ngc_key: Optional[str] = typer.Option(None, "--ngc-key", envvar="NGC_CLI_API_KEY"),
+    ngc_key: str | None = typer.Option(None, "--ngc-key", envvar="NGC_CLI_API_KEY"),
     no_install: bool = typer.Option(False, "--no-install",
         help="Just rsync + uv sync, skip the install step."),
 ):
@@ -334,7 +346,7 @@ def rsync(
 
 @app.command(name="up")
 def up_cmd(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
     profile: str = typer.Option(config.DEFAULT_DEPLOY_PROFILE, "--profile", "-p",
         help="dev-profile.sh profile (base / alerts / search / lvs)."),
@@ -343,8 +355,8 @@ def up_cmd(
         help="Remote LLM model name (used with --use-remote-llm)."),
     llm_endpoint: str = typer.Option(config.DEFAULT_LLM_ENDPOINT, "--llm-endpoint",
         envvar="LLM_ENDPOINT_URL"),
-    ngc_key: Optional[str] = typer.Option(None, "--ngc-key", envvar="NGC_CLI_API_KEY"),
-    nvidia_key: Optional[str] = typer.Option(None, "--nvidia-key", envvar="NVIDIA_API_KEY"),
+    ngc_key: str | None = typer.Option(None, "--ngc-key", envvar="NGC_CLI_API_KEY"),
+    nvidia_key: str | None = typer.Option(None, "--nvidia-key", envvar="NVIDIA_API_KEY"),
 ):
     """Bring the VSS stack up (in tmux, so it survives ssh disconnect)."""
     workdir = _normalize_workdir(workdir, target)
@@ -358,7 +370,7 @@ def up_cmd(
 
 @app.command()
 def down(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Stop the VSS stack."""
@@ -371,7 +383,7 @@ def down(
 
 @app.command()
 def status(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Show stack health (tmux, docker compose ps, UI port, GPU)."""
@@ -383,9 +395,9 @@ def status(
 
 @app.command()
 def logs(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
-    service: Optional[str] = typer.Option(None, "--service", "-s",
+    service: str | None = typer.Option(None, "--service", "-s",
         help="docker service name to tail (default: spectator's up.log)."),
     follow: bool = typer.Option(False, "--follow", "-f"),
     lines: int = typer.Option(200, "--lines", "-n"),
@@ -399,7 +411,7 @@ def logs(
 
 @app.command()
 def ui(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
 ):
     """Print the UI URL (and an `ssh -L` recipe if remote)."""
     ui_port = config.UI_PORT
@@ -429,11 +441,11 @@ def ui(
 def process(
     video: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
         help="Path to a video file. If --target is set, must be readable on the remote."),
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="If set, upload to that host's VSS API; otherwise localhost."),
-    prompt: Optional[str] = typer.Option(None, "--prompt", "-q",
+    prompt: str | None = typer.Option(None, "--prompt", "-q",
         help="Optional summarization prompt (default: agent default)."),
-    output: Optional[Path] = typer.Option(None, "--output", "-o",
+    output: Path | None = typer.Option(None, "--output", "-o",
         help="Write the result JSON here (default: stdout)."),
 ):
     """Upload a video to the running VSS stack and get back a summary."""
@@ -453,7 +465,7 @@ def process(
     fid = api.upload(video, host=target)
     console.print(f"  file_id = {fid}")
 
-    console.print(f"[bold]→[/bold] summarizing (this can take several minutes for long video) ...")
+    console.print("[bold]→[/bold] summarizing (this can take several minutes for long video) ...")
     result = api.summarize(fid, host=target, prompt=prompt)
 
     if output:
@@ -468,13 +480,13 @@ def process(
 @app.command()
 def query(
     question: str = typer.Argument(..., help="Free-form question."),
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
-    file_ids: Optional[str] = typer.Option(None, "--file-ids",
+    target: str | None = typer.Option(None, "--target", "-t"),
+    file_ids: str | None = typer.Option(None, "--file-ids",
         help="Comma-separated VSS file ids to scope the query."),
 ):
     """Ask a Q&A question against the indexed video corpus."""
     if not api.health(target):
-        console.print(f"[red]VSS Agent API not responding.[/red]")
+        console.print("[red]VSS Agent API not responding.[/red]")
         raise typer.Exit(2)
     ids = [s.strip() for s in (file_ids or "").split(",") if s.strip()] or None
     answer = api.query(question, host=target, file_ids=ids)
@@ -487,7 +499,7 @@ def query(
 
 @system_app.command("cache-cleaner-start")
 def cache_cleaner_start(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """Start the user-local sys-cache-cleaner.sh in the background (sudo -b)."""
@@ -502,7 +514,7 @@ def cache_cleaner_start(
 
 @system_app.command("cache-cleaner-stop")
 def cache_cleaner_stop(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
 ):
     """Stop the running sys-cache-cleaner.sh (sudo pkill)."""
     r = install_mod.stop_cache_cleaner(target)
@@ -515,14 +527,21 @@ def cache_cleaner_stop(
 
 @audio_app.command("install")
 def audio_install(
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="SSH host to install on (default: local)."),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
+    with_diarize: bool = typer.Option(True, "--with-diarize/--no-with-diarize",
+        help="Also install pyannote.audio so `audio diarize` and "
+             "`audio transcribe --diarize` work out of the box. Adds "
+             "~500 MB of dependencies (pyannote + its embedding model "
+             "wheels); pass --no-with-diarize on transcription-only "
+             "hosts. Idempotent — re-running with --with-diarize later "
+             "no-ops cleanly once pyannote is present."),
 ):
-    """Set up the audio-venv (whisper + torch) at $workdir/audio-venv/. Idempotent."""
+    """Set up the audio-venv (whisper + torch + pyannote) at $workdir/audio-venv/. Idempotent."""
     workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
-    r = audio_mod.install_audio_venv(target, cfg)
+    r = audio_mod.install_audio_venv(target, cfg, with_diarize=with_diarize)
     console.print(r.stdout)
     if not r.ok:
         console.print(f"[red]install failed[/red]\n{r.stderr}")
@@ -539,43 +558,70 @@ def audio_presets():
 def audio_transcribe(
     audio: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
         help="Path to an audio file (mp3, wav, m4a, flac, …)."),
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="SSH host to run on (default: local)."),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
     quality: str = typer.Option(audio_mod.DEFAULT_QUALITY, "--quality", "-q",
         help=f"Quality preset: {', '.join(audio_mod.QUALITY_PRESETS)}. "
              f"Run `spectator audio presets` for the table."),
-    model: Optional[str] = typer.Option(None, "--model",
+    model: str | None = typer.Option(None, "--model",
         help="Override the preset's whisper model (e.g. large-v3, large-v3-turbo). "
              "For non-English / bilingual audio, prefer large-v3 over large-v3-turbo."),
-    language: Optional[str] = typer.Option(None, "--language", "-l",
+    language: str | None = typer.Option(None, "--language", "-l",
         help="ISO-639-1 code (en, es, ru, hi, ja, zh, fr, de, pt, …) to lock the "
              "language. Omit (or pass `auto`) for bilingual / code-switched audio "
              "— Whisper auto-detects per 30-second window."),
     task: str = typer.Option("transcribe", "--task",
         help="`transcribe` keeps the original language; `translate` renders the "
              "transcript in English regardless of the source language."),
-    clip: Optional[str] = typer.Option(None, "--clip",
+    clip: str | None = typer.Option(None, "--clip",
         help="Comma-separated start,end pairs in seconds (e.g. \"0,2700\" for first 45 min)."),
-    initial_prompt: Optional[str] = typer.Option(None, "--initial-prompt",
+    initial_prompt: str | None = typer.Option(None, "--initial-prompt",
         help="Vocabulary-biasing prompt (technical terms, names)."),
-    session: Optional[str] = typer.Option(None, "--session",
+    session: str | None = typer.Option(None, "--session",
         help="tmux session name (default: derived from audio filename)."),
-    detach: Optional[bool] = typer.Option(None, "--detach/--no-detach",
+    detach: bool | None = typer.Option(None, "--detach/--no-detach",
         help="Run inside tmux on the target. Default: True for --target, False for local."),
-    follow: Optional[bool] = typer.Option(None, "--follow/--no-follow",
+    follow: bool | None = typer.Option(None, "--follow/--no-follow",
         help="After starting the tmux session, live-tail the log so progress streams "
              "in your terminal. Ctrl-C exits the tail without stopping the underlying "
              "job. Default: True when running with --target (and --detach), False otherwise."),
     skip_upload: bool = typer.Option(False, "--skip-upload",
         help="Assume the audio file is already at $workdir/audio-in/<basename> on the target."),
-    device: Optional[str] = typer.Option(None, "--device",
+    device: str | None = typer.Option(None, "--device",
         help="Force a specific torch device: `cuda` (NVIDIA GPU), `mps` (Apple Silicon), or `cpu`. "
              "Default: auto-detect via the audio-venv's torch (cuda > mps > cpu). Use `--device cpu` "
              "to test the CPU path on a host that has a GPU, or `--device cuda` to force-fail early "
              "if cuda is not actually available."),
+    diarize: bool = typer.Option(False, "--diarize",
+        help="After whisper finishes, also run pyannote speaker diarization "
+             "and produce a merged transcript with speaker labels at "
+             "$workdir/audio-out/<stem>/<stem>.diarized.{json,txt}. "
+             "Requires HUGGING_FACE_HUB_TOKEN (one-time setup: accept the "
+             "model license at https://huggingface.co/pyannote/speaker-diarization-3.1 "
+             "and create a read-scope token at https://huggingface.co/settings/tokens). "
+             "Adds the diarize stage to the same tmux session as whisper."),
+    diarize_model: str | None = typer.Option(None, "--diarize-model",
+        help="Override the pyannote pipeline model "
+             "(default: pyannote/speaker-diarization-3.1)."),
+    num_speakers: int | None = typer.Option(None, "--num-speakers",
+        help="Force pyannote to detect exactly this many speakers. "
+             "Mutually exclusive with --min-speakers/--max-speakers."),
+    min_speakers: int | None = typer.Option(None, "--min-speakers",
+        help="Lower bound on pyannote's detected speaker count."),
+    max_speakers: int | None = typer.Option(None, "--max-speakers",
+        help="Upper bound on pyannote's detected speaker count."),
+    hf_token: str | None = typer.Option(None, "--hf-token",
+        envvar=["HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"],
+        help="Hugging Face read-scope token for the pyannote model download "
+             "(also picked up from $HUGGING_FACE_HUB_TOKEN or $HF_TOKEN). "
+             "Persisted to $workdir/.creds on first use."),
 ):
-    """Transcribe an audio file (uploads to target, runs whisper in tmux)."""
+    """Transcribe an audio file (uploads to target, runs whisper in tmux).
+
+    Pass --diarize to chain pyannote speaker diarization onto the end of
+    the whisper run and produce a merged transcript with speaker labels.
+    """
     workdir = _normalize_workdir(workdir, target)
     cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
     if task not in ("transcribe", "translate"):
@@ -585,6 +631,17 @@ def audio_transcribe(
         console.print(f"[red]--device must be one of {audio_mod.VALID_DEVICES} "
                       f"(got {device!r})[/red]")
         raise typer.Exit(2)
+    if num_speakers is not None and (min_speakers is not None or max_speakers is not None):
+        console.print(
+            "[red]--num-speakers is mutually exclusive with --min-speakers / --max-speakers[/red]"
+        )
+        raise typer.Exit(2)
+    if not diarize and (diarize_model is not None or num_speakers is not None
+                        or min_speakers is not None or max_speakers is not None):
+        console.print(
+            "[yellow]--diarize-model / --num-speakers / --min-speakers / --max-speakers "
+            "have no effect without --diarize[/yellow]"
+        )
     r = audio_mod.transcribe(
         audio, host=target, cfg=cfg,
         quality=quality, model=model, language=language, task=task,
@@ -592,6 +649,12 @@ def audio_transcribe(
         session_name=session, detach=detach, follow=follow,
         skip_upload=skip_upload,
         device_override=device,
+        diarize=diarize,
+        diarize_model=diarize_model,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+        hf_token=hf_token,
     )
     # audio_mod.transcribe prints stdout itself (early, before tail -f).
     if not r.ok:
@@ -599,9 +662,84 @@ def audio_transcribe(
         raise typer.Exit(1)
 
 
+@audio_app.command("diarize")
+def audio_diarize(
+    audio: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
+        help="Path to an audio file (mp3, wav, m4a, flac, ...)."),
+    target: str | None = typer.Option(None, "--target", "-t",
+        help="SSH host to run on (default: local)."),
+    workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
+    model: str = typer.Option(diarize_mod.DEFAULT_DIARIZE_MODEL, "--model",
+        help="pyannote pipeline model "
+             "(default: pyannote/speaker-diarization-3.1)."),
+    num_speakers: int | None = typer.Option(None, "--num-speakers",
+        help="Force pyannote to detect exactly this many speakers. "
+             "Mutually exclusive with --min-speakers/--max-speakers."),
+    min_speakers: int | None = typer.Option(None, "--min-speakers",
+        help="Lower bound on pyannote's detected speaker count."),
+    max_speakers: int | None = typer.Option(None, "--max-speakers",
+        help="Upper bound on pyannote's detected speaker count."),
+    hf_token: str | None = typer.Option(None, "--hf-token",
+        envvar=["HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"],
+        help="Hugging Face read-scope token for the pyannote model download "
+             "(also picked up from $HUGGING_FACE_HUB_TOKEN or $HF_TOKEN). "
+             "Persisted to $workdir/.creds on first use."),
+    session: str | None = typer.Option(None, "--session",
+        help="tmux session name (default: diar-<safe-stem>)."),
+    detach: bool | None = typer.Option(None, "--detach/--no-detach",
+        help="Run inside tmux on the target. Default: True for --target, False for local."),
+    follow: bool | None = typer.Option(None, "--follow/--no-follow",
+        help="Live-tail the log after starting the tmux session. Ctrl-C exits "
+             "the tail without stopping the underlying job. Default: True with --target."),
+    skip_upload: bool = typer.Option(False, "--skip-upload",
+        help="Assume the audio file is already at $workdir/audio-in/<basename> on the target."),
+    device: str | None = typer.Option(None, "--device",
+        help="Force a specific torch device: `cuda`, `mps`, or `cpu`. "
+             "Default: auto-detect via the audio-venv's torch (cuda > mps > cpu)."),
+    auto_merge: bool = typer.Option(True, "--auto-merge/--no-auto-merge",
+        help="After diarization completes, if a sibling whisper transcript "
+             "(<stem>.json) exists in audio-out/<stem>/, merge them into "
+             "<stem>.diarized.{json,txt}. No-op when no whisper output is present."),
+):
+    """Run pyannote speaker diarization on an audio file. Sibling to `audio transcribe`."""
+    workdir = _normalize_workdir(workdir, target)
+    cfg = _resolve_cfg(workdir, None, None, None, None, None, None)
+    if device is not None and device not in audio_mod.VALID_DEVICES:
+        console.print(f"[red]--device must be one of {audio_mod.VALID_DEVICES} "
+                      f"(got {device!r})[/red]")
+        raise typer.Exit(2)
+    if num_speakers is not None and (min_speakers is not None or max_speakers is not None):
+        console.print(
+            "[red]--num-speakers is mutually exclusive with --min-speakers / --max-speakers[/red]"
+        )
+        raise typer.Exit(2)
+    if min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
+        console.print(
+            f"[red]--min-speakers ({min_speakers}) must be <= --max-speakers ({max_speakers})[/red]"
+        )
+        raise typer.Exit(2)
+    r = diarize_mod.diarize(
+        audio, host=target, cfg=cfg,
+        model=model,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+        hf_token=hf_token,
+        device_override=device,
+        session_name=session,
+        detach=detach,
+        follow=follow,
+        skip_upload=skip_upload,
+        auto_merge_whisper=auto_merge,
+    )
+    if not r.ok:
+        console.print(f"[red]diarize failed[/red]\n{r.stderr}")
+        raise typer.Exit(1)
+
+
 @audio_app.command("status")
 def audio_status(
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
 ):
     """List running whisper jobs + completed transcripts."""
@@ -615,9 +753,9 @@ def audio_status(
 def audio_fetch(
     output: Path = typer.Option(Path("./transcripts"), "--output", "-o",
         help="Local directory to rsync transcripts into."),
-    target: Optional[str] = typer.Option(None, "--target", "-t"),
+    target: str | None = typer.Option(None, "--target", "-t"),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w"),
-    only: Optional[str] = typer.Option(None, "--only",
+    only: str | None = typer.Option(None, "--only",
         help="Only fetch one transcript subdirectory (e.g. the audio's stem name)."),
 ):
     """rsync $workdir/audio-out/ back into a local directory."""
@@ -655,7 +793,7 @@ def _ui_server_pid_alive(pid_file: Path) -> int | None:
 
 @ui_server_app.command("start")
 def ui_server_start(
-    target: Optional[str] = typer.Option(None, "--target", "-t",
+    target: str | None = typer.Option(None, "--target", "-t",
         help="SSH host alias to drive jobs against (default: local). "
              "All jobs submitted via the Web UI will use this target."),
     workdir: str = typer.Option(config.DEFAULT_REMOTE_WORKDIR, "--workdir", "-w",

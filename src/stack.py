@@ -95,7 +95,8 @@ def down(cfg: config.StackConfig, host: str | None = None) -> RunResult:
     Covers (in order):
       1. VSS docker compose stack (`scripts/dev-profile.sh down`).
       2. The `spectator-up` tmux session (the bring-up watcher).
-      3. Any `audio-*` tmux sessions (one per `audio transcribe` job).
+      3. Any `audio-*` and `diar-*` tmux sessions (one per
+         `audio transcribe` and `audio diarize` job respectively).
          These can be holding the GPU long after VSS is down — silently
          competing with whatever the user brings back up next.
       4. The user-local cache cleaner is *surfaced but not stopped* —
@@ -111,14 +112,15 @@ def down(cfg: config.StackConfig, host: str | None = None) -> RunResult:
         scripts/dev-profile.sh down || true
         tmux kill-session -t spectator-up 2>/dev/null || true
 
-        # Kill any audio transcribe tmux sessions (named `audio-<stem>`).
+        # Kill any audio transcribe / diarize tmux sessions
+        # (named `audio-<stem>` and `diar-<stem>` respectively).
         # Listing first + iterating lets us print one line per killed
         # session — `tmux list-sessions | xargs kill-session` would be
         # silent.
         audio_sessions="$(tmux list-sessions -F '#{{session_name}}' \\
-          2>/dev/null | grep '^audio-' || true)"
+          2>/dev/null | grep -E '^(audio|diar)-' || true)"
         if [ -n "$audio_sessions" ]; then
-          echo "==== killing audio transcribe tmux sessions ===="
+          echo "==== killing audio transcribe / diarize tmux sessions ===="
           echo "$audio_sessions" | while read -r s; do
             tmux kill-session -t "$s" 2>/dev/null && echo "  ✓ $s killed"
           done

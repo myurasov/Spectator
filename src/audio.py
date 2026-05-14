@@ -32,7 +32,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import _creds, config
-from ._run import RunResult, run, rsync_to, ssh_run, ssh_stream
+from ._run import RunResult, run, ssh_run, ssh_stream
 
 console = Console()
 
@@ -176,9 +176,42 @@ def render_presets() -> None:
 # install (bootstrap whisper venv on target)
 # ---------------------------------------------------------------------------
 
-def install_audio_venv(host: str | None, cfg: config.StackConfig) -> RunResult:
-    """Idempotent install: venv + torch (cu128 if GPU, else CPU) + openai-whisper."""
+def install_audio_venv(
+    host: str | None,
+    cfg: config.StackConfig,
+    *,
+    with_diarize: bool = True,
+) -> RunResult:
+    """Idempotent install: venv + torch (cu128 if GPU, else CPU) + openai-whisper.
+
+    ``with_diarize`` (default ``True``) additionally installs
+    ``pyannote.audio`` into the same venv so ``spectator audio diarize``
+    and ``audio transcribe --diarize`` work out of the box. Pass
+    ``with_diarize=False`` from a transcription-only deployment to skip
+    the extra ~500 MB of dependency download. The pyannote block is
+    idempotent — re-running the install with ``with_diarize=True`` later
+    is a fast no-op once everything's in place.
+    """
     workdir_bash = _expand_tilde(cfg.workdir)
+    pyannote_block = ""
+    pyannote_verify = ""
+    if with_diarize:
+        from . import diarize as diarize_mod
+        pyannote_block = textwrap.dedent(f'''
+            if "$PY" -c "import pyannote.audio" 2>/dev/null; then
+              echo "==== pyannote.audio already installed ===="
+            else
+              echo "==== installing pyannote.audio ({diarize_mod.PYANNOTE_PIN}) ===="
+              uv pip install --python "$PY" "{diarize_mod.PYANNOTE_PIN}"
+            fi
+        ''').strip()
+        pyannote_verify = (
+            'try:\n'
+            '    import pyannote.audio as pa\n'
+            '    print("pyannote.audio:", pa.__version__)\n'
+            'except ImportError:\n'
+            '    print("pyannote.audio: not installed (with_diarize=False)")\n'
+        )
     script = textwrap.dedent(f'''
         set -e
         export PATH="$HOME/.local/bin:$PATH"
@@ -232,6 +265,8 @@ def install_audio_venv(host: str | None, cfg: config.StackConfig) -> RunResult:
           uv pip install --python "$PY" -U openai-whisper
         fi
 
+        {pyannote_block}
+
         echo
         echo "==== verify ===="
         "$PY" - <<'PY_EOF'
@@ -239,6 +274,7 @@ import torch, whisper
 print("torch:", torch.__version__, "  cuda available:", torch.cuda.is_available())
 print("whisper:", whisper.__version__)
 print("models available (large-v3, large-v3-turbo, etc.):", "ok")
+{pyannote_verify}
 mps_ok = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 if mps_ok and not torch.cuda.is_available():
     # Apple Silicon path. openai-whisper × torch >= 2.x crashes on MPS for
@@ -419,6 +455,12 @@ def transcribe(
     follow: bool | None = None,
     skip_upload: bool = False,
     device_override: str | None = None,
+    diarize: bool = False,
+    diarize_model: str | None = None,
+    num_speakers: int | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+    hf_token: str | None = None,
 ) -> RunResult:
     """Upload audio (if not skip_upload) and run whisper.
 
@@ -433,6 +475,18 @@ def transcribe(
     explicit string to force a specific device — useful when a host has
     a GPU but you want to test the CPU path, or when MPS is detected
     but a model is known not to work well on it.
+
+    `diarize=True` chains pyannote speaker diarization onto the end of
+    the whisper run in the same tmux session. After whisper exits 0,
+    the runner script invokes the diarize command (see
+    :func:`diarize.build_diarize_command`), then merges whisper segments
+    with diarization turns into ``<stem>.diarized.{json,txt}`` (see
+    :func:`diarize.build_merge_command`). ``diarize_model`` /
+    ``num_speakers`` / ``min_speakers`` / ``max_speakers`` / ``hf_token``
+    are forwarded to the diarize step; defaults follow
+    :mod:`diarize`'s defaults. The merge produces speaker-attributed
+    segments by maximum-overlap voting between each whisper segment and
+    the diarization turns that intersect it.
     """
     if quality not in QUALITY_PRESETS:
         raise ValueError(f"unknown quality preset: {quality!r}; "
@@ -524,6 +578,47 @@ def transcribe(
         output_subdir=output_subdir,
     )
 
+    if diarize:
+        # Compose whisper + diarize + merge into one shell script. The
+        # whole chain runs inside a subshell so any non-zero exit stays
+        # local — the surrounding wrapper still writes its
+        # ``==== END rc=$RC ====`` line so the WebUI parser, tail-F-
+        # awk-exit follow loop, and the END-marker-driven Co-SA caller
+        # all detect completion uniformly. The merge step's body
+        # self-checks for both whisper.json and pyannote.diar.json on
+        # disk and no-ops cleanly if either is missing.
+        from . import diarize as diarize_mod
+        diar_cmd = diarize_mod.build_diarize_command(
+            audio_basename=basename,
+            cfg=cfg,
+            model=diarize_model or diarize_mod.DEFAULT_DIARIZE_MODEL,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+            device=device,
+            stem=output_subdir,
+        )
+        merge_cmd = diarize_mod.build_merge_command(cfg, output_subdir)
+        cmd = (
+            "(\n"
+            f"  {cmd}\n"
+            "  WHISPER_RC=$?\n"
+            "  if [ $WHISPER_RC -ne 0 ]; then\n"
+            "    echo \"==== whisper failed (rc=$WHISPER_RC); skipping diarization ====\"\n"
+            "    exit $WHISPER_RC\n"
+            "  fi\n"
+            "  echo \"==== whisper done, starting diarization ====\"\n"
+            f"  {diar_cmd}\n"
+            "  DIARIZE_RC=$?\n"
+            "  if [ $DIARIZE_RC -ne 0 ]; then\n"
+            "    echo \"==== diarization failed (rc=$DIARIZE_RC); skipping merge ====\"\n"
+            "    exit $DIARIZE_RC\n"
+            "  fi\n"
+            "  echo \"==== diarization done, merging ====\"\n"
+            f"  {merge_cmd}\n"
+            ")"
+        )
+
     log_path = f"{_log_dir(cfg)}/{session_name}.log"
 
     # 4. dispatch
@@ -586,10 +681,24 @@ RUNNER_EOF
             exit $RC
         ''').strip()
 
+    # When diarize is requested, the runner needs HUGGING_FACE_HUB_TOKEN
+    # in its environment. Forward via ssh_run env so it gets `export`-ed
+    # into the outer wrapper's bash; tmux inherits and the runner script
+    # spawned by tmux inherits too. The token is *also* persisted to
+    # $workdir/.creds on first install via _creds.save_block, so a
+    # second invocation without --hf-token still works (the Python
+    # script self-sources via os.environ).
+    ssh_env: dict[str, str] = dict(cfg.env_block() or {})
+    if diarize and hf_token:
+        ssh_env["HUGGING_FACE_HUB_TOKEN"] = hf_token
     if host:
-        r = ssh_run(host, wrapper, env=cfg.env_block())
+        r = ssh_run(host, wrapper, env=(ssh_env or None))
     else:
-        r = run(["bash", "-c", wrapper])
+        import os
+        local_env: dict[str, str] | None = None
+        if diarize and hf_token:
+            local_env = {**os.environ, "HUGGING_FACE_HUB_TOKEN": hf_token}
+        r = run(["bash", "-c", wrapper], env=local_env)
 
     if not r.ok:
         return r
