@@ -210,6 +210,44 @@ Quality presets:
 
 For non-English recordings, bilingual / code-switched audio, or "translate to English" mode, see [REFERENCE.md → Audio language handling](REFERENCE.md#audio-language-handling).
 
+### Add speaker labels (diarization)
+
+Diarization figures out **who** is talking, which whisper alone can't tell you. Spectator drives [`pyannote.audio`](https://github.com/pyannote/pyannote-audio) in the same audio-venv as whisper.
+
+The audio-venv install (`./spectator audio install`) bundles pyannote by default — **no Hugging Face account required to install**. You only need a Hugging Face token when you actually run a diarize: pyannote downloads the model weights from HF at first use. One-time setup, only needed before the first diarize call:
+
+```bash
+# 1. Accept the model licenses in the HF web UI. Pyannote's gate is a
+#    multi-field form (Company, Website, Country, Use case) — not just
+#    a checkbox. Fill all fields AND submit on each page. Just ticking
+#    "I accept" leaves the gate locked. Three repos because 4.x reuses
+#    the community-1 embedding inside every pipeline (including 3.1):
+#    https://huggingface.co/pyannote/speaker-diarization-3.1
+#    https://huggingface.co/pyannote/segmentation-3.0
+#    https://huggingface.co/pyannote/speaker-diarization-community-1
+#
+# 2. Create a read-scope token at https://huggingface.co/settings/tokens
+#
+# 3. Pass the token once with --hf-token; it's persisted to
+#    $workdir/.creds on the target so subsequent runs don't need it.
+./spectator audio diarize meeting.mp3 --target <gpu-machine> \
+    --hf-token hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+After that, no `--hf-token` needed:
+
+```bash
+# standalone diarize (writes <stem>.diar.{rttm,json})
+./spectator audio diarize meeting.mp3 --target <gpu-machine>
+
+# chained: whisper + diarize + merge in one tmux session
+./spectator audio transcribe meeting.mp3 --target <gpu-machine> --diarize
+```
+
+The chained form produces `<stem>.diarized.{json,txt}` alongside the regular whisper output — each whisper segment gets a `speaker` field via maximum-overlap voting with pyannote's turns. Use `--num-speakers N` if you know the count in advance.
+
+On a DGX Spark (GB10), diarization runs ~50-150× faster than real-time — a 1 h recording diarizes in roughly 30-60 s once the model is loaded. See [REFERENCE.md → audio diarize](REFERENCE.md#audio-diarize) for the full reference.
+
 ### Transcribe locally on a Mac (no GPU host needed)
 
 Apple Silicon Macs can transcribe audio entirely locally — no SSH, no remote host. Spectator auto-detects the torch device and uses CPU on Apple Silicon by default (see the MPS note below for why):

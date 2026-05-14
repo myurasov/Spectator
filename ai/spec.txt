@@ -2,7 +2,7 @@
 Spectator — specification (canonical reference for AI dev agents)
 ================================================================================
 
-Version: 0.4.7
+Version: 0.4.8
 Status:  alpha
 License: Apache 2.0
 Source:  https://github.com/myurasov/Spectator
@@ -133,10 +133,26 @@ view, [REFERENCE.md](../REFERENCE.md) for the full reference.
                     policy.
     audio.py        Whisper sibling: Preset dataclass + 4 quality
                     presets (studio / meeting / phone / extreme) +
-                    install_audio_venv + transcribe (uploads, runs
-                    in tmux on the target, optional follow-tail) +
-                    status + fetch + render_presets +
-                    _detect_device (cuda > mps > cpu) + VALID_DEVICES
+                    install_audio_venv (with optional pyannote
+                    install via with_diarize=True) + transcribe
+                    (uploads, runs in tmux on the target, optional
+                    follow-tail, optional --diarize chain) + status
+                    + fetch + render_presets + _detect_device
+                    (cuda > mps > cpu) + VALID_DEVICES
+    diarize.py      pyannote.audio sibling for speaker diarization
+                    (introduced v0.4.8): install_diarize_deps +
+                    diarize (uploads, runs in tmux, follow-tail,
+                    optional auto-merge with whisper) +
+                    build_diarize_command + build_merge_command
+                    (composed by audio.transcribe --diarize) +
+                    merge_whisper_with_diarization (max-overlap
+                    voting) + merged_segments_to_txt. Default
+                    model pyannote/speaker-diarization-3.1; pinned
+                    to pyannote.audio>=4.0,<5 in the audio-venv
+                    (the 4.x line is the first version that imports
+                    cleanly against the cu128 torchaudio wheels we
+                    install for Blackwell / GB10 — 3.x references
+                    the removed ``torchaudio.AudioMetaData``).
     webui/          Persistent FastAPI Web UI added in v0.2.0.
       __init__.py   DEFAULT_PORT / DEFAULT_BIND constants + module doc
       _launch.py    uvicorn-importable; reads SPECTATOR_UI_{WORKDIR,
@@ -314,6 +330,7 @@ Top-level commands:
 
 audio sub-app:
   spectator audio install    [--target HOST] [--workdir DIR]
+                             [--with-diarize/--no-with-diarize]
   spectator audio presets
   spectator audio transcribe AUDIO [--target HOST] [--workdir DIR]
                              [--quality {studio|meeting|phone|extreme}]
@@ -323,6 +340,17 @@ audio sub-app:
                              [--detach/--no-detach]
                              [--follow/--no-follow]
                              [--skip-upload]
+                             [--diarize] [--diarize-model M]
+                             [--num-speakers N | --min-speakers N
+                              --max-speakers N] [--hf-token T]
+  spectator audio diarize    AUDIO [--target HOST] [--workdir DIR]
+                             [--model M]
+                             [--num-speakers N | --min-speakers N
+                              --max-speakers N] [--hf-token T]
+                             [--session NAME] [--detach/--no-detach]
+                             [--follow/--no-follow] [--skip-upload]
+                             [--device DEVICE]
+                             [--auto-merge/--no-auto-merge]
   spectator audio status     [--target HOST] [--workdir DIR]
   spectator audio fetch      [--target HOST] [--workdir DIR]
                              [--output DIR] [--only NAME]
@@ -452,6 +480,124 @@ There is currently no auto-cleanup of `audio-in/` or `audio-out/`
 on the target. That's intentional — the maintainer wants explicit
 control. If a future feature adds GC, it should be opt-in
 (`--prune` flag), not silent.
+
+Diarization (v0.4.8+, optional, via pyannote.audio):
+
+  pyannote.audio is installed into the same `$workdir/audio-venv/` as
+  whisper. The default is to install it (`audio install --with-diarize`);
+  pass `--no-with-diarize` to opt out (saves ~500 MB of dependency
+  download on transcription-only hosts; idempotent re-install adds it
+  later in seconds once the wheels are cached). Pin range:
+  `pyannote.audio>=4.0,<5` — the 4.x line is the first one that
+  imports cleanly against torchaudio >= 2.2 (which includes every
+  cu128 wheel set we install for Blackwell). The 4.x API only
+  differs from 3.x in the renamed `Pipeline.from_pretrained(token=...)`
+  keyword; everything else (`pipeline(audio, num_speakers=N)`,
+  `Annotation.itertracks`, `write_rttm`) is unchanged.
+
+  The pipeline (`pyannote/speaker-diarization-3.1` by default) needs a
+  Hugging Face read-scope token to download the model weights, plus
+  one-time license acceptance on the HF web UI for THREE pyannote
+  repos (pyannote.audio 4.x reuses the community-1 embedding model
+  inside every pipeline — including 3.1 — so its gate trips too).
+  Each gate is a multi-field FORM (Company, Website, Country, Use
+  case), not just a checkbox; fill all fields and Submit on every
+  page:
+
+    https://huggingface.co/settings/tokens                              (token)
+    https://huggingface.co/pyannote/speaker-diarization-3.1             (accept)
+    https://huggingface.co/pyannote/segmentation-3.0                    (accept)
+    https://huggingface.co/pyannote/speaker-diarization-community-1     (accept)
+
+  The token is persisted at `$workdir/.creds` as
+  HUGGING_FACE_HUB_TOKEN (added to `_creds.CREDS_VARS` in v0.4.8). The
+  CLI also accepts `HF_TOKEN` as a documented alias on `--hf-token`'s
+  envvar list. First-call --hf-token captures into .creds via the
+  standard `_creds.save_block` flow; subsequent calls source it back.
+
+  Two entry points:
+
+    spectator audio diarize AUDIO   — standalone. Produces
+                                      <stem>.diar.rttm (RTTM v1.5)
+                                      + <stem>.diar.json (structured
+                                      turns + per-speaker totals).
+                                      If a sibling <stem>.json from a
+                                      prior whisper run is found in the
+                                      same output dir, auto-merges
+                                      into <stem>.diarized.{json,txt}
+                                      (off via --no-auto-merge).
+
+    spectator audio transcribe --diarize AUDIO
+                                    — chained. Same tmux session
+                                      handles whisper, then diarize,
+                                      then merge. ==== END rc=... ====
+                                      marker still fires; the subshell
+                                      wrapper keeps internal exits
+                                      local. Whisper failure skips
+                                      diarize; diarize failure skips
+                                      merge — each step is gated on
+                                      the previous one's rc.
+
+  Speaker constraints (mutually exclusive groups):
+    --num-speakers N          → pin the detected count exactly
+    --min-speakers / --max-speakers
+                              → bounds on the detected count
+    (omit both)               → pyannote auto-detects
+
+  Output schema (`<stem>.diar.json`):
+
+    {
+      "schema_version": 1,
+      "audio": "/abs/path/to/<basename>",
+      "model": "pyannote/speaker-diarization-3.1",
+      "device": "cuda" | "mps" | "cpu",
+      "elapsed_s": float,
+      "audio_duration_s": float,
+      "rt_factor": float | null,
+      "num_speakers": int,
+      "speakers": [{"label": "SPEAKER_00", "total_speech_s": float}, ...],
+      "total_speech_s": float,
+      "turns": [{"start": float, "end": float, "duration": float,
+                 "speaker": "SPEAKER_NN"}, ...]
+    }
+
+  Merge schema (`<stem>.diarized.json`, when whisper output is present):
+
+    {
+      "schema_version": 1,
+      "whisper_source": "/abs/path/to/<stem>.json",
+      "diarization_source": "/abs/path/to/<stem>.diar.json",
+      "segments_total": int,
+      "segments_with_speaker": int,
+      "segments_without_overlap": int,
+      "speakers_seen": ["SPEAKER_00", ...],
+      "segments": [{<all whisper segment fields>, "speaker": "SPEAKER_NN" | null}, ...]
+    }
+
+  Merge algorithm: for each whisper segment, sum per-speaker overlap
+  durations against every diarization turn that intersects the
+  segment's [start, end]. Assign the speaker with the largest
+  cumulative overlap. Deterministic tie-break: alphabetically-first
+  speaker label wins. Segments outside every turn (silence or
+  out-of-range) get `speaker: null`.
+
+  pyannote performance on GB10 (Grace Blackwell DGX Spark):
+    * model load + warmup       : ~5-10 s
+    * pipeline RT factor        : 50-150× faster than real-time
+                                  (a 1 h recording diarizes in
+                                  ~30-60 s after model load)
+    * default precision         : float32; pyannote 3.x doesn't
+                                  benefit from --fp16
+
+  Failure modes worth knowing about:
+    * `pipeline = Pipeline.from_pretrained(...)` returns None when
+      the token works but the model licenses aren't accepted on
+      that HF account — Spectator surfaces the URLs to accept in the
+      Python-side error message before exiting 2.
+    * Shared-room mics collapse multiple in-room participants into one
+      cluster. pyannote separates voices, not seats; this is a known
+      limitation, not a bug. Use --num-speakers when you know the real
+      count to nudge clustering.
 
 
 --------------------------------------------------------------------------------

@@ -33,7 +33,9 @@ Spectator orchestrates two NVIDIA components that it does **not** redistribute. 
 |---|---|---|
 | [NVIDIA Video Search & Summarization (VSS) Blueprint v3.1](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) | Apache-2.0 | https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization |
 | [OpenAI Whisper](https://github.com/openai/whisper) | MIT | https://github.com/openai/whisper |
-| [PyTorch](https://pytorch.org/) (Whisper runtime) | BSD-3-Clause | https://github.com/pytorch/pytorch |
+| [pyannote.audio](https://github.com/pyannote/pyannote-audio) (v0.4.8+, speaker diarization) | MIT | https://github.com/pyannote/pyannote-audio |
+| [PyTorch](https://pytorch.org/) (Whisper / pyannote runtime) | BSD-3-Clause | https://github.com/pytorch/pytorch |
+| [Hugging Face Hub](https://huggingface.co/) (pyannote model registry; v0.4.8+) | service terms + per-model license | https://huggingface.co/ |
 | [NVIDIA NIM API endpoints](https://build.nvidia.com/) (remote LLM inference) | NVIDIA service terms | https://build.nvidia.com/ |
 
 Container base images and Docker images pulled from `nvcr.io` during VSS bring-up are governed by their own license terms; consult `nvcr.io` for details.

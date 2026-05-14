@@ -229,6 +229,101 @@ Quality presets at a glance (run `./spectator audio presets` for the full table)
 
 Override with `--model large-v3-turbo` (or any whisper model name). Slice with `--clip "0,2700"` (first 45 min). Bias technical vocab with `--initial-prompt "..."`.
 
+### audio diarize
+
+Speaker diarization via [`pyannote.audio`](https://github.com/pyannote/pyannote-audio). Tells you *who* is speaking, where whisper only tells you *what* they're saying. Runs in the same audio-venv as whisper; default pipeline is `pyannote/speaker-diarization-3.1`.
+
+#### When is the Hugging Face token needed?
+
+- **NEVER at install time.** `./spectator audio install` (with or without `--with-diarize`) does **not** touch Hugging Face. It only pulls the pyannote.audio Python wheel from PyPI, which is public.
+- **ONLY when you actually run diarization** — `audio diarize` or `audio transcribe --diarize`. At that point pyannote downloads the model weights from Hugging Face; the download requires a read-scope token AND a one-time license acceptance on the model pages.
+- If the token isn't set when you run diarize, Spectator exits with code 2 and prints the URLs you need to visit. The install on disk is fine; you can come back later, set up the token, and re-run without re-installing.
+
+```bash
+# one-time setup, before your first diarize call:
+
+# 1. Accept the model licenses in the HF web UI. Pyannote's gate is a
+#    multi-field form (Company, Website, Country, Use case), NOT just a
+#    checkbox — fill it out and Submit on each page. Just ticking
+#    "I accept" leaves the gate locked. README.md downloads as public
+#    metadata before the form is submitted, so don't take "I can see
+#    the model card" as evidence that access is granted; the weights
+#    stay gated until the form is in.
+#    Three repos are required because pyannote.audio 4.x reuses the
+#    x-vector embedding model from `speaker-diarization-community-1`
+#    inside every pipeline (including 3.1):
+#    https://huggingface.co/pyannote/speaker-diarization-3.1
+#    https://huggingface.co/pyannote/segmentation-3.0
+#    https://huggingface.co/pyannote/speaker-diarization-community-1
+
+# 2. Create a read-scope access token at
+#    https://huggingface.co/settings/tokens
+#    (name it however you like, e.g. "spectator-diarize")
+
+# 3. Persist it via Spectator (writes to $workdir/.creds with chmod 600;
+#    subsequent runs source it automatically — no need to re-export):
+./spectator audio diarize <any-recording.mp3> \
+  --target <gpu-machine> \
+  --hf-token hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# After step 3 succeeds once, the token is on the target's $workdir/.creds
+# and future invocations don't need --hf-token. Rotate keys by editing the
+# file directly.
+```
+
+```bash
+# already installed alongside whisper via `audio install` by default;
+# pass --no-with-diarize to skip it for transcription-only hosts.
+# Install does NOT need HF auth — it only pulls the public PyPI wheel:
+./spectator audio install --target <gpu-machine>
+
+# standalone diarize — writes <stem>.diar.{rttm,json}
+./spectator audio diarize meeting.mp3 --target <gpu-machine>
+
+# chained — whisper + diarize + merge in one tmux session
+./spectator audio transcribe meeting.mp3 --target <gpu-machine> --diarize
+
+# constrain the detected speaker count
+./spectator audio diarize meeting.mp3 --target <gpu-machine> --num-speakers 6
+./spectator audio diarize meeting.mp3 --target <gpu-machine> --min-speakers 2 --max-speakers 8
+```
+
+Flags shared by `audio diarize` and `audio transcribe --diarize`:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--model M` (or `--diarize-model M`) | `pyannote/speaker-diarization-3.1` | Any pyannote pipeline model. The audio-venv pins `pyannote.audio>=4.0,<5` — the 4.x line is the first version that imports cleanly against the cu128 torchaudio wheels we install for Blackwell / GB10 (3.x references the removed `torchaudio.AudioMetaData` type). The 3.1 pipeline file still loads under the 4.x runtime. |
+| `--num-speakers N` | unset | Force pyannote to detect exactly this many speakers. Mutually exclusive with `--min-speakers` / `--max-speakers`. |
+| `--min-speakers N` | unset | Lower bound. |
+| `--max-speakers N` | unset | Upper bound. |
+| `--hf-token T` | env: `$HUGGING_FACE_HUB_TOKEN`, fallback `$HF_TOKEN`, then `$workdir/.creds` | First-use captures into `.creds` via Spectator's standard cred-persistence flow. |
+| `--device D` | auto-detect (cuda > cpu) | `cuda` / `mps` / `cpu`. Same auto-detect probe as whisper. |
+| `--auto-merge / --no-auto-merge` | auto-merge on | (standalone `audio diarize` only) After diarization, if `<stem>.json` from a prior whisper run is on disk, merge into `<stem>.diarized.{json,txt}`. The chained `transcribe --diarize` always merges. |
+
+Output files under `$workdir/audio-out/<stem>/`:
+
+| File | Source | Notes |
+|---|---|---|
+| `<stem>.diar.rttm` | pyannote | RTTM v1.5 standard format (one `SPEAKER` line per turn). |
+| `<stem>.diar.json` | Spectator | Structured turns + per-speaker totals + run metadata. Schema in `spec.txt` § 6. |
+| `<stem>.diarized.json` | merge | Whisper segments augmented with a `speaker` field. Same shape as whisper's `<stem>.json`, plus `speaker: "SPEAKER_NN" \| null`. |
+| `<stem>.diarized.txt` | merge | Human-readable, grouped by speaker block: `[H:MM:SS] SPEAKER_00:` followed by indented utterance lines. |
+
+Merge algorithm: each whisper segment is assigned the speaker with the largest cumulative overlap against pyannote's turns. Ties go to the alphabetically-first speaker label (deterministic). Segments outside every turn — silence, music interludes, edits — get `speaker: null`.
+
+Known limitations:
+
+- **Shared-room mics** collapse multiple in-room participants into one cluster. pyannote separates voices, not seats; this is the algorithm's nature, not a Spectator bug. Use `--num-speakers` when you know the real count.
+- **Model license acceptance is per HF account, per repo, and the gate is a form, not just a checkbox**: a working token isn't enough. Three pyannote repos are gated and each has its own multi-field access form (Company / University, Website, Country, Use case) — you have to fill all the fields AND submit on each page, not just tick the checkbox. The three repos:
+  - `pyannote/speaker-diarization-3.1` — the pipeline file.
+  - `pyannote/segmentation-3.0` — the segmentation backbone.
+  - `pyannote/speaker-diarization-community-1` — the x-vector embedding model. pyannote.audio 4.x bundles the community-1 embedding inside *every* pipeline it ships, including the 3.1 default, so this gate trips even when you never explicitly ask for community-1.
+
+  README downloads as public metadata even before the form is in, which can fool you into thinking access is granted. Once each form is submitted, access is auto-granted within seconds (no manual review queue). Spectator catches the `GatedRepoError` from `Pipeline.from_pretrained(...)` and exits with code 2 + all three URLs so you know where to go.
+- **v3.x is no longer supported**: the audio-venv pins `pyannote.audio>=4.0,<5`. The 3.x line references the removed `torchaudio.AudioMetaData` type and fails to import on every modern torchaudio. If you need the older 3.x behavior, install it manually into the audio-venv at your own risk — it won't import against the cu128 wheels Spectator's `audio install` ships.
+
+Performance on a DGX Spark (NVIDIA GB10 Grace Blackwell): ~5-10 s model load + warmup, then ~50-150× faster than real-time for the diarization itself. A 1-hour recording diarizes in about 30-60 s once the model is in GPU memory.
+
 ### 6. Iterative development
 
 When you're editing Spectator's own source and just want to push code changes (no `uv sync`, no install):

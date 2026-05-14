@@ -282,6 +282,65 @@ when the maintainer adds or removes items here.)
   cred vars get added to `_creds.CREDS_VARS` and round-trip through
   the file automatically. (May 2026, v0.4.4)
 
+- **Speaker diarization via pyannote.audio (v0.4.8)**:
+  Spectator's audio sub-app now has a `diarize` sibling to `transcribe`
+  plus a `--diarize` flag on `transcribe` itself. Implementation lives
+  in a separate module (`src/diarize.py`) to keep `audio.py` under the
+  ~600-line cap; the two modules cross-call via public command-builder
+  helpers (`build_diarize_command`, `build_merge_command`) so the
+  `--diarize` chain stays in a single tmux session and the merge step
+  can compose with the transcribe runner without an extra SSH
+  round-trip. Audio-venv install grew a `with_diarize=True` default
+  that runs `uv pip install "pyannote.audio>=3.1,<4"` idempotently
+  alongside whisper. Default pipeline model is
+  `pyannote/speaker-diarization-3.1` (still the most widely-tested
+  pipeline file; loads cleanly under 4.x runtime). The audio-venv pin
+  targets the **4.x line** (`pyannote.audio>=4.0,<5`) because 3.x
+  references the now-removed `torchaudio.AudioMetaData` type and
+  fails import against torchaudio >= 2.2 — which includes every cu128
+  wheel set we install for Blackwell / GB10. Three 4.x API changes
+  Spectator handles: (a) `Pipeline.from_pretrained(..., token=...)`
+  keyword (was `use_auth_token=...` in 3.x); (b) `pipeline(audio)`
+  returns a `DiarizeOutput` wrapper, not an `Annotation` — the
+  diarize script unwraps `.speaker_diarization` for the Annotation;
+  (c) the pipeline pulls its x-vector embedding from a third gated
+  repo `pyannote/speaker-diarization-community-1` inside *every*
+  pipeline, including 3.1, so a working install requires all three
+  HF license forms (3.1 + segmentation-3.0 + community-1) submitted
+  — and each one is a multi-field form, not just a checkbox; README
+  downloads as public metadata before the form is in. Error message
+  surfaces all three URLs. RTTM writer in 4.x refuses URIs with
+  spaces; the diarize script slugs the URI to `[A-Za-z0-9._-]+`
+  before writing.
+
+- **Blackwell GB10 sm_121 vs cu128 nvrtc — `Tensor.abs` patch**:
+  GB10 reports compute capability (12, 1) = sm_121, but the nvrtc
+  bundled with torch 2.11.0+cu128 wheels only knows up to sm_120,
+  so the elementwise `.abs()` fusion path on complex CUDA tensors
+  (used by pyannote's wespeaker fbank as `torch.fft.rfft(x).abs()`)
+  fails with `nvrtc: error: invalid value for --gpu-architecture
+  (-arch)`. Spectator's `audio diarize` probes at startup and
+  surgically monkey-patches `Tensor.abs` to compute magnitude
+  manually (`sqrt(real**2 + imag**2)`) for complex CUDA tensors
+  only — all other ops are untouched. Real-valued `.abs()` and CPU
+  complex `.abs()` go through `_orig_abs`. The patch costs nothing
+  on properly-supported hardware (probe succeeds, no patch). On
+  GB10 the workaround path runs at rt-factor 3.81× (vs expected
+  50–150× for native cu128/sm_120); the perf hit is from extra
+  kernel launches in the manual sqrt-real-imag form, not from
+  CPU roundtrip. Fix lands properly when PyTorch ships nvrtc with
+  sm_121 in its allowlist (cu129+ / nightlies on cu13); revisit the
+  workaround at that point. (May 2026, v0.4.8) HF auth follows the existing `.creds` pattern:
+  `HUGGING_FACE_HUB_TOKEN` joined `_creds.CREDS_VARS` so it round-trips
+  through `$workdir/.creds`; the diarize CLI also accepts the shorter
+  `HF_TOKEN` env-var alias for convenience but persists under the
+  canonical name. Merge algorithm: max-overlap voting between each
+  whisper segment and the diarization turns that intersect it;
+  alphabetically-first label on ties; `null` for segments that fall
+  outside every turn. Stack down sweep extended to `^(audio|diar)-`
+  so `audio diarize` tmux sessions get reaped on `spectator down`
+  alongside `audio transcribe` sessions. (May 2026, v0.4.8)
+
 - **`down` is non-destructive; `uninstall` does the rm -rf**:
   `spectator down` stops everything Spectator launches (VSS docker
   stack, `spectator-up` tmux, per-job `audio-*` tmux sessions) but
