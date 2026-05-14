@@ -25,9 +25,16 @@ standard variable name). One-time setup the operator does outside
 Spectator:
 
   1. Create a read-scope token at https://huggingface.co/settings/tokens
-  2. Accept the model licenses (one click each):
+  2. Accept the model licenses on each of THREE repo pages (pyannote.audio
+     4.x reuses the community-1 x-vector embedding inside every pipeline,
+     including the 3.1 default). Each gate is a multi-field FORM
+     (Company, Website, Country, Use case) — fill all fields and Submit
+     on each page; the README of a gated repo downloads as public
+     metadata even before the form is in, which can fool a quick check
+     into thinking access is granted:
        https://huggingface.co/pyannote/speaker-diarization-3.1
        https://huggingface.co/pyannote/segmentation-3.0
+       https://huggingface.co/pyannote/speaker-diarization-community-1
 
 After that the token round-trips through ``.creds`` like any other
 Spectator credential.
@@ -197,9 +204,13 @@ def _diarize_python_script(
             print(
                 "ERROR: HUGGING_FACE_HUB_TOKEN is not set.\\n"
                 "Get a read-scope token at https://huggingface.co/settings/tokens\\n"
-                "Then accept the model licenses (one-time):\\n"
+                "Then accept the model licenses (one-time, three repos —\\n"
+                "pyannote.audio 4.x bundles the community-1 embedding in\\n"
+                "every pipeline; each gate is a multi-field form, not just\\n"
+                "a checkbox):\\n"
                 "  https://huggingface.co/pyannote/speaker-diarization-3.1\\n"
                 "  https://huggingface.co/pyannote/segmentation-3.0\\n"
+                "  https://huggingface.co/pyannote/speaker-diarization-community-1\\n"
                 "Persist via:\\n"
                 "  echo 'export HUGGING_FACE_HUB_TOKEN=hf_...' >> $WORKDIR/.creds",
                 file=sys.stderr,
