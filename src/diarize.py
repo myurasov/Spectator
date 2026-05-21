@@ -309,8 +309,26 @@ def _diarize_python_script(
                     raise
 
         print(f"pipeline ready in {{time.monotonic() - t0:.1f}}s; running on {{AUDIO_PATH}}")
+        # pyannote 3.1+ exposes ProgressHook in
+        # ``pyannote.audio.pipelines.utils.hook``. Wiring it in turns the
+        # otherwise-silent inference middle (segmentation → embeddings →
+        # discrete_diarization, ~minutes on long files) into per-stage
+        # progress lines in the run log. Falls back to a silent run on
+        # older installs so the tool still works.
         t1 = time.monotonic()
-        result = pipeline(AUDIO_PATH{pipeline_call_tail})
+        try:
+            from pyannote.audio.pipelines.utils.hook import ProgressHook
+        except ImportError:
+            print(
+                "NOTE: pyannote.audio.pipelines.utils.hook.ProgressHook is "
+                "not available in this pyannote.audio install; diarize will "
+                "run silently until completion.",
+                file=sys.stderr,
+            )
+            result = pipeline(AUDIO_PATH{pipeline_call_tail})
+        else:
+            with ProgressHook() as hook:
+                result = pipeline(AUDIO_PATH{pipeline_call_tail}, hook=hook)
         elapsed = time.monotonic() - t1
 
         # pyannote.audio 4.x returns a ``DiarizeOutput`` object with
