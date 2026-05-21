@@ -672,11 +672,31 @@ RUNNER_EOF
         local_env: dict[str, str] | None = None
         if hf_token:
             local_env = {**os.environ, "HUGGING_FACE_HUB_TOKEN": hf_token}
-        r = run(["bash", "-c", wrapper], env=local_env)
+        if detach:
+            # tmux dispatch — the bash wrapper is short (kicks off the tmux
+            # session and prints a few status lines), buffering is fine.
+            r = run(["bash", "-c", wrapper], env=local_env)
+        else:
+            # Foreground local — the bash wrapper runs the full pyannote
+            # pipeline inline. Capturing stdout would buffer every progress
+            # line (segmentation / embeddings / discrete_diarization) until
+            # the run completes, making it look hung. Inherit the parent
+            # stdio so the operator sees live progress as it streams.
+            import subprocess
+            proc = subprocess.run(
+                ["bash", "-c", wrapper],
+                env=local_env,
+                stdout=None,
+                stderr=None,
+            )
+            r = RunResult(rc=proc.returncode, stdout="", stderr="")
 
     if not r.ok:
         return r
-    console.print(r.stdout)
+    if r.stdout:
+        # Foreground local path inherits stdio so r.stdout is empty — only
+        # print when we actually have captured output (detach / host paths).
+        console.print(r.stdout)
 
     if detach and follow and host is not None:
         console.print(
