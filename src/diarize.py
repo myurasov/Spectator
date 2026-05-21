@@ -309,26 +309,66 @@ def _diarize_python_script(
                     raise
 
         print(f"pipeline ready in {{time.monotonic() - t0:.1f}}s; running on {{AUDIO_PATH}}")
-        # pyannote 3.1+ exposes ProgressHook in
-        # ``pyannote.audio.pipelines.utils.hook``. Wiring it in turns the
-        # otherwise-silent inference middle (segmentation → embeddings →
-        # discrete_diarization, ~minutes on long files) into per-stage
-        # progress lines in the run log. Falls back to a silent run on
-        # older installs so the tool still works.
+        # Custom plain-text hook for pyannote's pipeline callback protocol.
+        # pyannote ships ``ProgressHook`` under
+        # ``pyannote.audio.pipelines.utils.hook``, but it's built on
+        # ``rich.progress.Progress`` with a default Console — which
+        # auto-detects ``sys.stdout.isatty() == False`` (our tmux+redirected
+        # log case) and silently suppresses every render. So pyannote's hook
+        # is useless for the way we run diarize. The protocol itself is
+        # public + stable: any callable with the signature below is invoked
+        # by pyannote on each step transition + intra-step progress event.
+        # Emitting plain lines makes the otherwise-silent inference middle
+        # (segmentation → embeddings → discrete_diarization, often minutes
+        # on long files) visible in the run log.
+        class _LineProgressHook:
+            def __init__(self):
+                self._step = None
+                self._step_t0 = None
+                self._last_pct = -1
+                self._t0 = time.monotonic()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return
+
+            def __call__(self, step_name, step_artifact, file=None,
+                         total=None, completed=None):
+                now = time.monotonic()
+                if step_name != self._step:
+                    if self._step is not None and self._step_t0 is not None:
+                        print(
+                            f"  [{{now - self._step_t0:5.1f}}s] "
+                            f"{{self._step}}: done",
+                            flush=True,
+                        )
+                    self._step = step_name
+                    self._step_t0 = now
+                    self._last_pct = -1
+                    print(
+                        f"→ {{step_name}} "
+                        f"(started at {{now - self._t0:.1f}}s)",
+                        flush=True,
+                    )
+                if total and completed is not None and total > 0:
+                    pct = int(100 * completed / total)
+                    if pct >= self._last_pct + 10 or completed >= total:
+                        bar_len = 30
+                        filled = int(bar_len * completed / total)
+                        bar = "#" * filled + "." * (bar_len - filled)
+                        print(
+                            f"  [{{now - self._step_t0:5.1f}}s] "
+                            f"{{step_name}} [{{bar}}] {{pct:3d}}% "
+                            f"({{completed}}/{{total}})",
+                            flush=True,
+                        )
+                        self._last_pct = pct
+
         t1 = time.monotonic()
-        try:
-            from pyannote.audio.pipelines.utils.hook import ProgressHook
-        except ImportError:
-            print(
-                "NOTE: pyannote.audio.pipelines.utils.hook.ProgressHook is "
-                "not available in this pyannote.audio install; diarize will "
-                "run silently until completion.",
-                file=sys.stderr,
-            )
-            result = pipeline(AUDIO_PATH{pipeline_call_tail})
-        else:
-            with ProgressHook() as hook:
-                result = pipeline(AUDIO_PATH{pipeline_call_tail}, hook=hook)
+        with _LineProgressHook() as hook:
+            result = pipeline(AUDIO_PATH{pipeline_call_tail}, hook=hook)
         elapsed = time.monotonic() - t1
 
         # pyannote.audio 4.x returns a ``DiarizeOutput`` object with
