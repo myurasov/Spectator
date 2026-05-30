@@ -158,6 +158,27 @@ QUALITY_PRESETS: dict[str, Preset] = {
 DEFAULT_QUALITY = "meeting"
 
 
+# --- Pinned, CUDA-matched torch / torchaudio pair --------------------------
+# torch and torchaudio MUST share the same release version AND the same
+# +cuXXX build tag. If they diverge, torchaudio's compiled `_extension`
+# raises "PyTorch and TorchAudio were compiled with different CUDA versions"
+# at import time, which breaks pyannote.audio (it imports torchaudio) and so
+# every `audio transcribe --diarize` / `audio diarize` run.
+#
+# Why pinned, not bare `torch torchaudio`: installing the latest unpinned
+# wheels can grab a torch release whose matching torchaudio build does not
+# exist on the chosen CUDA index yet (e.g. torch 2.12.0+cu130 while the cu130
+# index tops out at torchaudio 2.11.0), so the resolver silently lands a
+# mismatched torchaudio. 2.11.0+cu128 is the tested Blackwell / GB10 pair
+# (see ai/dev.memory.md): the cu128 runtime is forward-compatible with the
+# CUDA-13 driver on GB10, and diarize.py carries the sm_121 nvrtc runtime
+# patch for this exact pairing. Bump TORCH_PIN and TORCH_CUDA_CHANNEL
+# together, and only to a version that exists for BOTH torch and torchaudio
+# on the channel index.
+TORCH_PIN = "2.11.0"
+TORCH_CUDA_CHANNEL = "cu128"
+
+
 def render_presets() -> None:
     table = Table(title="Audio quality presets")
     table.add_column("preset")
@@ -182,7 +203,7 @@ def install_audio_venv(
     *,
     with_diarize: bool = True,
 ) -> RunResult:
-    """Idempotent install: venv + torch (cu128 if GPU, else CPU) + openai-whisper.
+    """Idempotent install: venv + a CUDA-matched torch+torchaudio pair + openai-whisper.
 
     ``with_diarize`` (default ``True``) additionally installs
     ``pyannote.audio`` into the same venv so ``spectator audio diarize``
@@ -243,18 +264,22 @@ def install_audio_venv(
         # the python explicitly via --python.
         PY="$VENV/bin/python"
 
-        # Probe for GPU. If nvidia-smi is present, use the cu128 wheels (works
-        # on Blackwell / GB10). Otherwise CPU-only torch. Skipped entirely if
-        # torch is already installed.
-        if "$PY" -c "import torch" 2>/dev/null; then
-          echo "==== torch already installed ===="
+        # torch + torchaudio must be installed together as a CUDA-matched,
+        # pinned pair (TORCH_PIN / TORCH_CUDA_CHANNEL). The guard imports BOTH:
+        # a bare `import torch` check would miss a missing or CUDA-mismatched
+        # torchaudio (torchaudio's `_extension` raises on a torch/torchaudio
+        # CUDA-version skew), leaving diarization silently broken. On any
+        # failure we --force-reinstall the pinned pair so a stray mismatched
+        # torch/torchaudio gets repaired rather than skipped.
+        if "$PY" -c "import torch, torchaudio" 2>/dev/null; then
+          echo "==== torch + torchaudio already installed (import-clean) ===="
         else
           if command -v nvidia-smi >/dev/null 2>&1; then
-            echo "==== installing torch (cu128 / GPU) ===="
-            uv pip install --python "$PY" torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+            echo "==== installing torch+torchaudio {TORCH_PIN} ({TORCH_CUDA_CHANNEL} / GPU, pinned matched pair) ===="
+            uv pip install --python "$PY" --force-reinstall --index-url https://download.pytorch.org/whl/{TORCH_CUDA_CHANNEL} "torch=={TORCH_PIN}" "torchaudio=={TORCH_PIN}"
           else
-            echo "==== installing torch (CPU-only — no GPU detected) ===="
-            uv pip install --python "$PY" torch torchaudio
+            echo "==== installing torch+torchaudio {TORCH_PIN} (CPU-only — no GPU detected, pinned matched pair) ===="
+            uv pip install --python "$PY" --force-reinstall "torch=={TORCH_PIN}" "torchaudio=={TORCH_PIN}"
           fi
         fi
 
@@ -270,8 +295,15 @@ def install_audio_venv(
         echo
         echo "==== verify ===="
         "$PY" - <<'PY_EOF'
-import torch, whisper
+import torch, torchaudio, whisper
 print("torch:", torch.__version__, "  cuda available:", torch.cuda.is_available())
+print("torchaudio:", torchaudio.__version__)
+# Fail the install loudly if the torch/torchaudio +cuXXX build tags diverge,
+# rather than letting the skew surface later as a pyannote import crash.
+_torch_cuda = torch.__version__.split("+", 1)
+_audio_cuda = torchaudio.__version__.split("+", 1)
+if len(_torch_cuda) == 2 and len(_audio_cuda) == 2 and _torch_cuda[1] != _audio_cuda[1]:
+    raise SystemExit("FATAL: torch/torchaudio CUDA build mismatch: torch=" + torch.__version__ + " torchaudio=" + torchaudio.__version__)
 print("whisper:", whisper.__version__)
 print("models available (large-v3, large-v3-turbo, etc.):", "ok")
 {pyannote_verify}
